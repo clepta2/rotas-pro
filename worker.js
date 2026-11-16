@@ -11,7 +11,8 @@
  * @see https://github.com/clepta2/rotas-pro
  */
 
-import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG } from './site-assets.js';
+import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG, MAPS_ENGINE_JS } from './site-assets.js';
+import { decodeMvtToCompactTile } from './mvt-decoder.js';
 import {
   geocodificarLocal,
   geocodificarReverso,
@@ -22,11 +23,55 @@ import {
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
 
+const CAPITAIS_E_POLOS_BR = [
+  { nome: 'São Paulo', lat: -23.5505, lng: -46.6333, cap: true },
+  { nome: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729, cap: true },
+  { nome: 'Brasília', lat: -15.7942, lng: -47.8825, cap: true },
+  { nome: 'Salvador', lat: -12.9714, lng: -38.5014, cap: true },
+  { nome: 'Fortaleza', lat: -3.7172, lng: -38.5433, cap: true },
+  { nome: 'Belo Horizonte', lat: -19.9167, lng: -43.9345, cap: true },
+  { nome: 'Manaus', lat: -3.1190, lng: -60.0217, cap: true },
+  { nome: 'Curitiba', lat: -25.4284, lng: -49.2733, cap: true },
+  { nome: 'Recife', lat: -8.0476, lng: -34.8770, cap: true },
+  { nome: 'Goiânia', lat: -16.6869, lng: -49.2648, cap: true },
+  { nome: 'Belém', lat: -1.4558, lng: -48.4902, cap: true },
+  { nome: 'Porto Alegre', lat: -30.0346, lng: -51.2177, cap: true },
+  { nome: 'Guarulhos', lat: -23.4538, lng: -46.5333, cap: false },
+  { nome: 'Campinas', lat: -22.9056, lng: -47.0608, cap: false },
+  { nome: 'São Luís', lat: -2.5307, lng: -44.3068, cap: true },
+  { nome: 'Maceió', lat: -9.6658, lng: -35.7350, cap: true },
+  { nome: 'Natal', lat: -5.7945, lng: -35.2110, cap: true },
+  { nome: 'Campo Grande', lat: -20.4697, lng: -54.6201, cap: true },
+  { nome: 'Teresina', lat: -5.0892, lng: -42.8016, cap: true },
+  { nome: 'João Pessoa', lat: -7.1195, lng: -34.8450, cap: true },
+  { nome: 'Aracaju', lat: -10.9472, lng: -37.0731, cap: true },
+  { nome: 'Cuiabá', lat: -15.6014, lng: -56.0979, cap: true },
+  { nome: 'Florianópolis', lat: -27.5954, lng: -48.5480, cap: true },
+  { nome: 'Vitória', lat: -20.3155, lng: -40.3128, cap: true },
+  { nome: 'Porto Velho', lat: -8.7612, lng: -63.9004, cap: true },
+  { nome: 'Macapá', lat: 0.0349, lng: -51.0694, cap: true },
+  { nome: 'Rio Branco', lat: -9.9754, lng: -67.8249, cap: true },
+  { nome: 'Boa Vista', lat: 2.8235, lng: -60.6758, cap: true },
+  { nome: 'Palmas', lat: -10.1844, lng: -48.3336, cap: true },
+  { nome: 'Santos', lat: -23.9678, lng: -46.3322, cap: false },
+  { nome: 'Ribeirão Preto', lat: -21.1775, lng: -47.8103, cap: false },
+  { nome: 'São José dos Campos', lat: -23.1791, lng: -45.8872, cap: false },
+  { nome: 'Sorocaba', lat: -23.5015, lng: -47.4526, cap: false },
+  { nome: 'Uberlândia', lat: -18.9186, lng: -48.2772, cap: false },
+  { nome: 'Londrina', lat: -23.3045, lng: -51.1696, cap: false },
+  { nome: 'Joinville', lat: -26.3045, lng: -48.8487, cap: false },
+  { nome: 'Caxias do Sul', lat: -29.1678, lng: -51.1794, cap: false }
+];
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
-  'Access-Control-Max-Age': '86400'
+  'Access-Control-Max-Age': '86400',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Ponte-Version': '3.0.0'
 };
 
 const PLANOS_CONFIG = {
@@ -127,6 +172,119 @@ export default {
     if (pathname === '/rotas-pro.js') {
       return new Response(CLIENT_JS, {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/javascript; charset=utf-8' }
+      });
+    }
+    if (pathname === '/ponte-maps-engine.js') {
+      return new Response(MAPS_ENGINE_JS, {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' }
+      });
+    }
+
+    // ── CAMADA DE TILES VETORIAIS SOBERANOS (R2 CACHE + AUTO-HYDRATION MVT) ──
+    if (pathname.startsWith('/api/mapas/tiles/') && pathname.endsWith('.json')) {
+      const cleanPath = pathname.replace('/api/mapas/tiles/', '').replace('.json', '');
+      const parts = cleanPath.split('/');
+      if (parts.length === 3) {
+        const [z, x, y] = parts;
+        const r2Key = `tiles/${z}/${x}/${y}.json`;
+
+        // 1. Checa Cache API do PoP Cloudflare
+        const cache = caches.default;
+        const cachedResp = await cache.match(request);
+        if (cachedResp) return cachedResp;
+
+        // 2. Checa Bucket R2 Soberano (rotas-mapas-r2)
+        if (env && env.ROTAS_R2) {
+          const obj = await env.ROTAS_R2.get(r2Key);
+          if (obj) {
+            const body = await obj.text();
+            const resp = new Response(body, {
+              status: 200,
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'public, max-age=604800, s-maxage=2592000',
+                'X-Ponte-Tile-Source': 'R2-Sovereign-Cache'
+              }
+            });
+            ctx.waitUntil(cache.put(request, resp.clone()));
+            return resp;
+          }
+        }
+
+        // 3. Auto-Hydration & Stashing permanente para o R2
+        try {
+          const pbfUrl = `https://tiles.openfreemap.org/planet/20261101_080013_pt/${z}/${x}/${y}.pbf`;
+          const pbfRes = await fetch(pbfUrl);
+          if (pbfRes.ok) {
+            const ab = await pbfRes.arrayBuffer();
+            const compact = decodeMvtToCompactTile(new Uint8Array(ab));
+            const jsonStr = JSON.stringify(compact);
+            if (env && env.ROTAS_R2) {
+              ctx.waitUntil(env.ROTAS_R2.put(r2Key, jsonStr, { httpMetadata: { contentType: 'application/json' } }));
+            }
+            const resp = new Response(jsonStr, {
+              status: 200,
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'public, max-age=604800, s-maxage=2592000',
+                'X-Ponte-Tile-Source': 'Edge-Hydrated-To-R2'
+              }
+            });
+            ctx.waitUntil(cache.put(request, resp.clone()));
+            return resp;
+          }
+        } catch (_) {}
+
+        return new Response(JSON.stringify({ water: [], park: [], building: [], road: [], poi: [], place: [] }), {
+          status: 200,
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8' }
+        });
+      }
+    }
+
+    // ── CAMADAS NACIONAIS DO BRASIL (IBGE UFs + RIOS + RODOVIAS + MANCHAS URBANAS DO R2) ──
+    if (pathname === '/api/mapas/camadas/brasil.json') {
+      const cache = caches.default;
+      const cached = await cache.match(request);
+      if (cached) return cached;
+
+      let ufs = [], roads = [], rivers = [], urban = [];
+      if (env && env.ROTAS_R2) {
+        const [oUfs, oRoads, oRivers, oUrban] = await Promise.all([
+          env.ROTAS_R2.get('geo/br-ufs.json'),
+          env.ROTAS_R2.get('geo/br-roads.json'),
+          env.ROTAS_R2.get('geo/br-rivers.json'),
+          env.ROTAS_R2.get('geo/br-urban.json')
+        ]);
+        if (oUfs) ufs = await oUfs.json();
+        if (oRoads) roads = await oRoads.json();
+        if (oRivers) rivers = await oRivers.json();
+        if (oUrban) urban = await oUrban.json();
+      }
+
+      const payload = JSON.stringify({ ufs, roads, rivers, urban, cidades: CAPITAIS_E_POLOS_BR });
+      const resp = new Response(payload, {
+        status: 200,
+        headers: {
+          ...CORS_HEADERS,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'public, max-age=604800, s-maxage=2592000'
+        }
+      });
+      ctx.waitUntil(cache.put(request, resp.clone()));
+      return resp;
+    }
+
+    // ── ROTA EMBED INTERATIVO (IFRAME PARA SITES DE CLIENTES) ──
+    if (pathname === '/embed') {
+      const orig = url.searchParams.get('origem') || '01310-100';
+      const dest = url.searchParams.get('destino') || '04538-133';
+      const tema = url.searchParams.get('tema') || 'dark';
+      const embedHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Ponte Maps Embed</title><style>html,body,#map-wrap{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0b1120;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}</style></head><body><div id="map-wrap"><canvas id="ponte-canvas"></canvas></div><script type="module">import { PonteMapEngine } from '/ponte-maps-engine.js'; const engine = new PonteMapEngine(document.getElementById('ponte-canvas'), { theme: '${tema}', zoom: 13.5 }); fetch('/api/rotas/calcular?origem=${encodeURIComponent(orig)}&destino=${encodeURIComponent(dest)}').then(r=>r.json()).then(d=>{ if(d.valido) engine.setRoute(d, true); });</script></body></html>`;
+      return new Response(embedHtml, {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'text/html; charset=utf-8' }
       });
     }
 

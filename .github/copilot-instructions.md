@@ -17,6 +17,7 @@ Sempre consulte primeiro o catálogo de microsserviços do marketplace (`my-api-
 | **QR Code & Pix Copia e Cola** | `api.qrserver.com`, bibliotecas externas CDN | **PixValidator Pro API (`pixvalidator-pro`)** | `/api/pix/qrcode` (SVG nativo com EMV BR Code dinâmico e CRC16) |
 | **Código de Barras** | JsBarcode CDN, APIs externas de boletos | **BoletoValidator Pro API (`boletovalidator-pro`)** | Renderizador vetorial nativo ITF-25 FEBRABAN em SVG |
 | **Validação / Dados de Veículos & FIPE** | APIs externas de terceiros, web scrapers | **Placas Pro API (`placas-pro`)** | `https://placas-pro-api.clepta2.workers.dev/api/placas/{placa}`, `/chassi/{chassi}`, `/renavam/{renavam}`, `/isencao-ipva`, `/fipe` |
+| **Mapas, Rotas, Tracking Uber/iFood & Pedágios** | Google Maps Directions/Matrix, Mapbox, OSRM externo | **Rotas & Mapas Pro API (`rotas-pro`)** | `https://rotas-pro-api.clepta2.workers.dev/api/rotas/calcular`, `/tracking`, `/mapa.svg`, `/otimizar`, `/geocoding/reverso` |
 | **CNPJ, Razão Social, QSA, CNAE** | ReceitaWS, BrasilAPI, CNPJ.ws | **CNPJ Pro API (`cnpj-pro`)** | `https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/{cnpj}` |
 | **CEP & Endereços (DNE Correios)** | ViaCEP, APIs de terceiros | **CEPs Pro API (`ceps-pro`)** | `https://ceps-pro-api.vicknovais03.workers.dev/api/cep/{cep}` |
 | **Validação e Auditoria de CPF** | Regex frágeis ou serviços externos | **CPFValidator Pro API (`cpfvalidator-pro`)** | `https://cpfvalidator-pro-api.maputo2.workers.dev/api/cpf/{cpf}` |
@@ -52,3 +53,20 @@ Sempre consulte primeiro o catálogo de microsserviços do marketplace (`my-api-
 4. **Blindagem e Validação Determinística:**
    - Evitar expressões regulares vulneráveis a ReDoS para checagens de integridade.
    - Usar algoritmos matemáticos padronizados (Luhn ISO/IEC 7812, FEBRABAN Módulo 10/11, DENATRAN Módulo 11, ISO 3779 VIN).
+
+---
+
+## 🚫 Isolamento Estrito: Projetos Externos Fora de Escopo (`ozinfo` e `diffai`)
+
+**REGRA DE SEGURANÇA E ISOLAMENTO DE ESCOPO:**
+Os diretórios e repositórios **`ozinfo`** (incluindo `ozinfo/ozinfo`) e **`diffai`** (incluindo `diffos-saas` ou projetos correlatos) **NÃO fazem parte deste projeto (Ponte API Marketplace / Ecossistema APIs Pro)**.
+
+1. **PROIBIÇÃO DE ALTERAÇÃO:**
+   - É expressamente proibido criar, editar, renomear ou deletar arquivos dentro de `C:\Users\Win10\Documents\ozinfo` e `C:\Users\Win10\Documents\diffai` a partir desta sessão.
+   - É expressamente proibido rodar comandos git (`git commit`, `git push`, `git add`, `git checkout`, `git reset`, etc.) ou comandos de build/deploy nesses dois projetos.
+   - Scripts automatizados ou varreduras em lote que percorram `C:\Users\Win10\Documents` DEVEM obrigatoriamente ignorar e filtrar `ozinfo` e `diffai`.
+
+2. **CONSULTA PRÉVIA OBRIGATÓRIA:**
+   - O assistente NUNCA deve tocar, alterar, sincronizar ou modificar nada em `ozinfo` ou `diffai` por conta própria.
+   - Caso qualquer ação seja necessária nesses projetos, o assistente DEVE obrigatoriamente parar, perguntar ao usuário e obter autorização expressa e pontual antes de realizar qualquer operação.
+

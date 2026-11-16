@@ -92,20 +92,111 @@
       border-radius: var(--radius-xl);
       overflow: hidden;
       margin-bottom: 18px;
-      box-shadow: 0 18px 40px -10px rgba(0, 0, 0, 0.35);
-      cursor: grab;
+      height: 510px;
+      box-shadow: 0 18px 40px -10px rgba(0, 0, 0, 0.40);
+      user-select: none;
     }
-    .map-viewport-frame:active {
-      cursor: grabbing;
+    @media (max-width: 768px) {
+      .map-viewport-frame {
+        height: 390px;
+      }
+    }
+    .map-viewport-frame.is-fullscreen {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 9990 !important;
+      border-radius: 0 !important;
+      margin: 0 !important;
+    }
+    .map-search-overlay {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      pointer-events: none;
+      z-index: 20;
+      flex-wrap: wrap;
+    }
+    .map-search-box {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(12px);
+      border-radius: 12px;
+      padding: 4px 6px 4px 12px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+      max-width: 340px;
+      width: 100%;
+    }
+    .map-search-box input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #f8fafc;
+      font-size: 12.5px;
+      font-weight: 600;
+      outline: none;
+      min-width: 120px;
+    }
+    .map-layers-bar {
+      pointer-events: auto;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .map-layer-pill {
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 9px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #cbd5e1;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    .map-layer-pill.is-active {
+      border-color: #a3e635;
+      color: #a3e635;
+      background: rgba(20, 35, 25, 0.95);
     }
     .map-zoom-controls {
       position: absolute;
-      bottom: 42px;
-      right: 16px;
+      bottom: 20px;
+      right: 14px;
       display: flex;
       flex-direction: column;
       gap: 6px;
-      z-index: 15;
+      z-index: 20;
+    }
+    .map-place-popup {
+      position: absolute;
+      bottom: 16px;
+      left: 14px;
+      max-width: 330px;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      border-radius: 12px;
+      padding: 12px 14px;
+      color: #f8fafc;
+      z-index: 25;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+      display: none;
     }
     .map-zoom-btn {
       width: 34px;
@@ -525,15 +616,52 @@
                   </button>
                 </div>
 
-                <!-- Viewport do Mapa Vetorial com Zoom & Pan -->
+                <!-- Viewport do Mapa Vetorial Interativo 60 FPS (Estilo Google Maps / Uber) -->
                 <div class="map-viewport-frame" id="map-viewport-frame">
-                  <div id="map-svg-container" style="width:100%;transition:transform 0.12s ease-out;transform-origin:center center;">
-                    <!-- SVG injetado dinamicamente -->
+                  <canvas id="ponte-map-canvas" style="display:block;width:100%;height:100%;cursor:grab;"></canvas>
+
+                  <!-- Barra Flutuante de Busca & Camadas -->
+                  <div class="map-search-overlay">
+                    <div class="map-search-box">
+                      <i data-lucide="search" style="color:#94a3b8;width:15px;height:15px;"></i>
+                      <input type="text" id="map-quick-search" placeholder="Buscar CEP, Av. Paulista, Curitiba..." />
+                      <button id="btn-map-quick-search" class="primary-button accent" style="height:28px;padding:0 10px;font-size:11px;border-radius:8px;">Ir</button>
+                    </div>
+                    <div class="map-layers-bar">
+                      <button class="map-layer-pill" id="btn-layer-style" title="Alternar Google Maps Claro / Uber Night">
+                        <i data-lucide="sun" style="width:13px;height:13px;"></i> <span id="layer-style-label">Google Maps Claro</span>
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-layer-3d" title="Prédios em 3D Isométrico">
+                        <i data-lucide="layers" style="width:13px;height:13px;"></i> <span>3D</span>
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-layer-traffic" title="Camada de Trânsito Ao Vivo">
+                        <i data-lucide="activity" style="width:13px;height:13px;"></i> <span>Trânsito</span>
+                      </button>
+                      <button class="map-layer-pill" id="btn-layer-fullscreen" title="Expandir Mapa em Tela Cheia">
+                        <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
+                      </button>
+                    </div>
                   </div>
+
+                  <!-- Popup Flutuante: O que há aqui? (Clique no Mapa) -->
+                  <div class="map-place-popup" id="map-place-popup">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;">
+                      <strong id="popup-place-title" style="font-size:12.5px;color:#a3e635;">Local Selecionado</strong>
+                      <button id="btn-close-popup" style="background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:0;"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
+                    </div>
+                    <div id="popup-place-addr" style="font-size:11px;color:#cbd5e1;margin-bottom:6px;line-height:1.35;"></div>
+                    <div id="popup-place-coords" style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:8px;"></div>
+                    <div style="display:flex;gap:6px;">
+                      <button id="btn-popup-set-dest" class="primary-button accent" style="height:26px;padding:0 10px;font-size:10.5px;border-radius:6px;">Traçar Rota até Aqui</button>
+                    </div>
+                  </div>
+
+                  <!-- Controles de Zoom & GPS -->
                   <div class="map-zoom-controls">
                     <button class="map-zoom-btn" id="btn-zoom-in" title="Aumentar Zoom">+</button>
                     <button class="map-zoom-btn" id="btn-zoom-out" title="Reduzir Zoom">−</button>
-                    <button class="map-zoom-btn" id="btn-zoom-reset" title="Centralizar Mapa" style="font-size:11px;">1x</button>
+                    <button class="map-zoom-btn" id="btn-zoom-reset" title="Centralizar Rota" style="font-size:11px;"><i data-lucide="compass" style="width:15px;height:15px;"></i></button>
+                    <button class="map-zoom-btn" id="btn-gps-me" title="Minha Localização (GPS)"><i data-lucide="map-pin" style="width:15px;height:15px;"></i></button>
                   </div>
                 </div>
 
@@ -759,12 +887,42 @@
   </nav>
 
   <script type="module">
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=2.0.0';
+
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
     let currentLang = 'curl';
-    let currentZoom = 1;
-    let animInterval = null;
+    let animFrameId = null;
     let lastPixPayload = '';
+    let lastClickedCoords = null;
+
+    // Inicializa o Motor Cartográfico 60 FPS
+    const mapCanvas = document.getElementById('ponte-map-canvas');
+    const initialTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    const mapEngine = window._mapEngine = new PonteMapEngine(mapCanvas, {
+      apiBase: API_BASE,
+      theme: initialTheme,
+      lat: -23.5740,
+      lng: -46.6690,
+      zoom: 14.0,
+      onMapClick: async (coords) => {
+        mapEngine.setCustomPin(coords);
+        lastClickedCoords = coords;
+        const popup = document.getElementById('map-place-popup');
+        popup.style.display = 'block';
+        document.getElementById('popup-place-title').textContent = 'Consultando CEP Reverso...';
+        document.getElementById('popup-place-addr').textContent = '';
+        document.getElementById('popup-place-coords').textContent = coords.lat.toFixed(5) + ', ' + coords.lng.toFixed(5);
+        try {
+          const r = await fetch(API_BASE + '/api/rotas/geocoding/reverso?lat=' + coords.lat + '&lng=' + coords.lng);
+          const d = await r.json();
+          if (d.valido) {
+            document.getElementById('popup-place-title').textContent = d.municipio + ' / ' + d.uf + ' • CEP ' + d.cepEstimado;
+            document.getElementById('popup-place-addr').textContent = d.enderecoFormatado;
+          }
+        } catch (_) {}
+      }
+    });
 
     function showToast(msg) {
       const t = document.getElementById('ponte-toast');
@@ -814,28 +972,108 @@
       });
     });
 
-    // Tema
+    // Tema Global e Estilo do Mapa
+    const layerStyleBtn = document.getElementById('btn-layer-style');
+    const layerStyleLabel = document.getElementById('layer-style-label');
+    function syncMapStyleLabel(theme) {
+      if (layerStyleLabel) layerStyleLabel.textContent = theme === 'dark' ? 'Google Maps Claro' : 'Uber Night Escuro';
+    }
+    syncMapStyleLabel(initialTheme);
+
     document.getElementById('theme-toggle-btn')?.addEventListener('click', () => {
       const cur = document.documentElement.getAttribute('data-theme') || 'dark';
       const next = cur === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
       localStorage.setItem('ponte.theme', next);
+      mapEngine.setTheme(next);
+      syncMapStyleLabel(next);
+    });
+
+    layerStyleBtn?.addEventListener('click', () => {
+      const next = mapEngine.theme === 'dark' ? 'light' : 'dark';
+      mapEngine.setTheme(next);
+      syncMapStyleLabel(next);
+    });
+
+    document.getElementById('btn-layer-3d')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn.classList.toggle('is-active');
+      mapEngine.set3D(btn.classList.contains('is-active'));
+    });
+
+    document.getElementById('btn-layer-traffic')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn.classList.toggle('is-active');
+      mapEngine.setTraffic(btn.classList.contains('is-active'));
+    });
+
+    document.getElementById('btn-layer-fullscreen')?.addEventListener('click', (e) => {
+      const frame = document.getElementById('map-viewport-frame');
+      frame.classList.toggle('is-fullscreen');
+      e.currentTarget.classList.toggle('is-active');
+      setTimeout(() => mapEngine._resize(), 60);
+    });
+
+    // Busca Rápida dentro do Mapa (flyTo suave)
+    async function executarBuscaMapa() {
+      const q = document.getElementById('map-quick-search').value.trim();
+      if (!q) return;
+      const res = await fetch(API_BASE + '/api/rotas/geocoding?q=' + encodeURIComponent(q));
+      const d = await res.json();
+      if (d.valido) {
+        mapEngine.flyTo(d.lat, d.lng, 14.8, 700);
+        mapEngine.setCustomPin({ lat: d.lat, lng: d.lng });
+        lastClickedCoords = { lat: d.lat, lng: d.lng };
+        const popup = document.getElementById('map-place-popup');
+        popup.style.display = 'block';
+        document.getElementById('popup-place-title').textContent = (d.cidade || '') + '/' + (d.uf || '') + ' • ' + (d.cep || '');
+        document.getElementById('popup-place-addr').textContent = d.rotulo;
+        document.getElementById('popup-place-coords').textContent = d.lat.toFixed(5) + ', ' + d.lng.toFixed(5);
+      } else {
+        showToast('Local não encontrado!');
+      }
+    }
+    document.getElementById('btn-map-quick-search')?.addEventListener('click', executarBuscaMapa);
+    document.getElementById('map-quick-search')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') executarBuscaMapa();
+    });
+
+    document.getElementById('btn-close-popup')?.addEventListener('click', () => {
+      document.getElementById('map-place-popup').style.display = 'none';
+      mapEngine.setCustomPin(null);
+    });
+    document.getElementById('btn-popup-set-dest')?.addEventListener('click', () => {
+      if (!lastClickedCoords) return;
+      document.getElementById('rota-destino').value = lastClickedCoords.lat.toFixed(5) + ', ' + lastClickedCoords.lng.toFixed(5);
+      document.getElementById('map-place-popup').style.display = 'none';
       executarTrackingMapa();
     });
 
-    // Zoom do Mapa
-    const mapSvgContainer = document.getElementById('map-svg-container');
+    // Controles de Zoom & GPS do Mapa
     document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
-      currentZoom = Math.min(2.2, Number((currentZoom + 0.25).toFixed(2)));
-      mapSvgContainer.style.transform = 'scale(' + currentZoom + ')';
+      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.min(18.5, mapEngine.zoom + 1.0), 250);
     });
     document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
-      currentZoom = Math.max(1, Number((currentZoom - 0.25).toFixed(2)));
-      mapSvgContainer.style.transform = 'scale(' + currentZoom + ')';
+      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.max(4.0, mapEngine.zoom - 1.0), 250);
     });
     document.getElementById('btn-zoom-reset')?.addEventListener('click', () => {
-      currentZoom = 1;
-      mapSvgContainer.style.transform = 'scale(1)';
+      if (mapEngine.routeData) mapEngine.setRoute(mapEngine.routeData, true);
+      else mapEngine.flyTo(-14.235, -51.925, 4.5, 600);
+    });
+    document.getElementById('btn-gps-me')?.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        showToast('Geolocalização não suportada neste navegador.');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const { latitude, longitude } = pos.coords;
+        mapEngine.flyTo(latitude, longitude, 15.2, 700);
+        mapEngine.setCustomPin({ lat: latitude, lng: longitude });
+        showToast('Centralizado na sua localização GPS!');
+      }, () => {
+        showToast('Permissão de GPS negada — centralizado em São Paulo.');
+        mapEngine.flyTo(-23.5614, -46.6558, 14.5, 700);
+      });
     });
 
     function getActiveTab() {
@@ -859,16 +1097,11 @@
       const codeEl = document.getElementById('snippet-code');
 
       if (currentLang === 'curl') {
-        codeEl.textContent = 'curl -s "' + full + '" \
-  -H "x-api-key: rot_live_anycast_2026"';
+        codeEl.textContent = 'curl -s "' + full + '" \\\\n  -H "x-api-key: rot_live_anycast_2026"';
       } else if (currentLang === 'nodejs') {
-        codeEl.textContent = 'const res = await fetch("' + full + '");
-const data = await res.json();
-console.log(data);';
+        codeEl.textContent = 'const res = await fetch("' + full + '");\nconst data = await res.json();\nconsole.log(data);';
       } else {
-        codeEl.textContent = 'import requests
-res = requests.get("' + full + '")
-print(res.json())';
+        codeEl.textContent = 'import requests\nres = requests.get("' + full + '")\nprint(res.json())';
       }
     }
 
@@ -886,31 +1119,28 @@ print(res.json())';
       document.getElementById('console-output').textContent = JSON.stringify(data, null, 2);
     }
 
-    // Executar Rota e Mapa SVG
+    // Executar Rota e Atualizar Motor Cartográfico 60 FPS
     async function executarTrackingMapa() {
       const orig = document.getElementById('rota-origem').value || '01310-100';
       const dest = document.getElementById('rota-destino').value || '04538-133';
       const placa = document.getElementById('rota-placa').value || 'BRA2E19';
       const prog = document.getElementById('rota-progresso-slider').value || '45';
-      const tema = document.documentElement.getAttribute('data-theme') || 'dark';
       updateSnippet();
 
       const t0 = performance.now();
       try {
-        const q = '?origem=' + encodeURIComponent(orig) + '&destino=' + encodeURIComponent(dest) + '&modal=' + currentModal + '&placa=' + encodeURIComponent(placa) + '&progresso=' + prog + '&tema=' + tema;
-        const [resJson, resSvg] = await Promise.all([
-          fetch(API_BASE + '/api/rotas/tracking' + q),
-          fetch(API_BASE + '/api/rotas/mapa.svg' + q)
-        ]);
+        const q = '?origem=' + encodeURIComponent(orig) + '&destino=' + encodeURIComponent(dest) + '&modal=' + currentModal + '&placa=' + encodeURIComponent(placa) + '&progresso=' + prog;
+        const resJson = await fetch(API_BASE + '/api/rotas/tracking' + q);
         const data = await resJson.json();
-        const svgText = await resSvg.text();
         const lat = Math.max(1, Math.round(performance.now() - t0));
 
-        mapSvgContainer.innerHTML = svgText;
         renderJson(data, lat);
 
         if (data.valido && data.rotaBase) {
           const r = data.rotaBase;
+          mapEngine.setRoute(r, true);
+          mapEngine.setVehicleProgress(Number(prog));
+
           document.getElementById('live-status-pill').textContent = data.statusFase.replace(/_/g, ' ');
           document.getElementById('card-val-moto').textContent = r.cotacoesCorridaEFrete.modalidades.motoDeliveryIfood.formatado;
           document.getElementById('card-eta-moto').textContent = 'ETA: ' + r.comparativoModais.motoDelivery.tempoMin + ' min';
@@ -937,8 +1167,9 @@ print(res.json())';
 
     document.getElementById('btn-calc-rota')?.addEventListener('click', executarTrackingMapa);
     document.getElementById('rota-progresso-slider')?.addEventListener('input', (e) => {
-      document.getElementById('progresso-val-txt').textContent = e.target.value + '%';
-      executarTrackingMapa();
+      const val = Number(e.target.value);
+      document.getElementById('progresso-val-txt').textContent = val + '%';
+      mapEngine.setVehicleProgress(val);
     });
 
     document.querySelectorAll('.modal-chip').forEach(btn => {
@@ -960,42 +1191,57 @@ print(res.json())';
       });
     });
 
-    // Animação Contínua da Viagem Ao Vivo
+    // Animação Contínua 60 FPS da Viagem Ao Vivo
     document.getElementById('btn-toggle-anim')?.addEventListener('click', () => {
       const label = document.getElementById('anim-btn-label');
       const slider = document.getElementById('rota-progresso-slider');
-      if (animInterval) {
-        clearInterval(animInterval);
-        animInterval = null;
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
         label.textContent = 'Simular Viagem Ao Vivo';
         return;
       }
       label.textContent = 'Pausar Simulação';
-      let p = parseInt(slider.value, 10);
+      let p = parseFloat(slider.value);
       if (p >= 100) p = 0;
-      animInterval = setInterval(() => {
-        p += 5;
-        if (p > 100) {
-          clearInterval(animInterval);
-          animInterval = null;
+      let lastTs = performance.now();
+
+      const stepAnim = (now) => {
+        const dt = (now - lastTs) / 1000;
+        lastTs = now;
+        p += dt * 7.5; // 7.5% por segundo (~13 segundos a viagem inteira suave em 60fps)
+        if (p >= 100) {
+          p = 100;
+          slider.value = '100';
+          document.getElementById('progresso-val-txt').textContent = '100%';
+          mapEngine.setVehicleProgress(100);
+          animFrameId = null;
           label.textContent = 'Simular Viagem Ao Vivo';
+          document.getElementById('live-status-pill').textContent = 'VIAGEM CONCLUÍDA';
           return;
         }
-        slider.value = String(p);
-        document.getElementById('progresso-val-txt').textContent = p + '%';
-        executarTrackingMapa();
-      }, 650);
+        slider.value = String(Math.round(p));
+        document.getElementById('progresso-val-txt').textContent = Math.round(p) + '%';
+        mapEngine.setVehicleProgress(p);
+        animFrameId = requestAnimationFrame(stepAnim);
+      };
+      animFrameId = requestAnimationFrame(stepAnim);
     });
 
-    // Copiar Pix e Baixar SVG
+    // Copiar Pix e Baixar SVG Vetorial da Rota
     document.getElementById('btn-copy-pix-rota')?.addEventListener('click', () => {
       if (lastPixPayload) {
         navigator.clipboard.writeText(lastPixPayload).then(() => showToast('Pix Copia e Cola da corrida copiado!'));
       }
     });
-    document.getElementById('btn-download-map-svg')?.addEventListener('click', () => {
-      const svg = mapSvgContainer.innerHTML.trim();
-      if (!svg) return;
+    document.getElementById('btn-download-map-svg')?.addEventListener('click', async () => {
+      const orig = document.getElementById('rota-origem').value || '01310-100';
+      const dest = document.getElementById('rota-destino').value || '04538-133';
+      const placa = document.getElementById('rota-placa').value || 'BRA2E19';
+      const prog = document.getElementById('rota-progresso-slider').value || '45';
+      const q = '?origem=' + encodeURIComponent(orig) + '&destino=' + encodeURIComponent(dest) + '&modal=' + currentModal + '&placa=' + encodeURIComponent(placa) + '&progresso=' + prog + '&tema=' + mapEngine.theme;
+      const res = await fetch(API_BASE + '/api/rotas/mapa.svg' + q);
+      const svg = await res.text();
       const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

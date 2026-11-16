@@ -4,6 +4,10 @@ compatibility_date = "2026-10-01"
 workers_dev = true
 account_id = "69a48d4ddb66b8ec51f460da8856cf2a"
 
+[[r2_buckets]]
+binding = "ROTAS_R2"
+bucket_name = "rotas-mapas-r2"
+
 [vars]
 SERVICE_NAME = "Rotas & Mapas Pro API"
 ENVIRONMENT = "production"
