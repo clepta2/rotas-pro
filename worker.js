@@ -12,7 +12,7 @@
  */
 
 import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG, MAPS_ENGINE_JS } from './site-assets.js';
-import { rotearPorMalhaRealR2 } from './astar-routing.js';
+import { rotearPorMalhaRealR2, deg2num } from './astar-routing.js';
 import {
   geocodificarLocal,
   geocodificarReverso,
@@ -311,7 +311,7 @@ export default {
       return jsonResp({ valido: true, query: q, total: results.length, resultados: results });
     }
 
-    // ── CAMADA DE LOJAS & COMÉRCIOS ATIVOS POR RAIO E CATEGORIA (100% SOBERANO R2 + CNPJ PRO) ──
+    // ── CAMADA DE LOJAS & COMÉRCIOS ATIVOS SHARDED POR CÉLULA z12 (ESCALA PARA MILHÕES DE EMPRESAS NO R2) ──
     if (pathname === '/api/rotas/lojas') {
       const lat = parseFloat(url.searchParams.get('lat') || '-23.5614');
       const lng = parseFloat(url.searchParams.get('lng') || '-46.6558');
@@ -320,17 +320,48 @@ export default {
       const q = (url.searchParams.get('q') || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const limite = Math.min(300, Math.max(1, parseInt(url.searchParams.get('limite') || '150', 10)));
 
-      if (!memLojasCache && env && env.ROTAS_R2) {
-        try {
-          const obj = await env.ROTAS_R2.get('geo/lojas-ativas.json');
-          if (obj) memLojasCache = await obj.json();
-        } catch (_) {}
+      // 1. Calcula células z12 que cobrem o ponto + vizinhança imediata (máx 4 shards)
+      const centerT = deg2num(lat, lng, 12);
+      const shardCoords = [
+        { x: centerT.x, y: centerT.y },
+        { x: centerT.x + 1, y: centerT.y },
+        { x: centerT.x - 1, y: centerT.y },
+        { x: centerT.x, y: centerT.y + 1 },
+        { x: centerT.x, y: centerT.y - 1 }
+      ];
+
+      let baseLojas = [];
+      let totalShardsLidos = 0;
+
+      if (env && env.ROTAS_R2) {
+        const shardPromises = shardCoords.map(async (sc) => {
+          try {
+            const obj = await env.ROTAS_R2.get(`stores/12/${sc.x}/${sc.y}.json`);
+            if (obj) {
+              totalShardsLidos++;
+              return await obj.json();
+            }
+          } catch (_) {}
+          return [];
+        });
+        const arrays = await Promise.all(shardPromises);
+        for (const arr of arrays) {
+          if (Array.isArray(arr) && arr.length) baseLojas.push(...arr);
+        }
+
+        // Fallback para geo/lojas-ativas.json se não houver shard z12 na região
+        if (baseLojas.length === 0) {
+          if (!memLojasCache) {
+            try {
+              const obj = await env.ROTAS_R2.get('geo/lojas-ativas.json');
+              if (obj) memLojasCache = await obj.json();
+            } catch (_) {}
+          }
+          if (Array.isArray(memLojasCache)) baseLojas = memLojasCache;
+        }
       }
 
-      const baseLojas = Array.isArray(memLojasCache) ? memLojasCache : [];
       const filtradas = [];
-
-      // Filtro rápido por bounding box antes do Haversine para latência <2ms
       const dLatMax = raioKm / 111.0;
       const dLngMax = raioKm / 95.0;
 
@@ -369,7 +400,9 @@ export default {
         centro: { lat, lng },
         raioKm,
         categoria,
-        totalCatalogo: baseLojas.length,
+        arquitetura: totalShardsLidos > 0 ? 'R2_Sharded_z12' : 'R2_Global_Fallback',
+        shardsLidos: totalShardsLidos,
+        lojasAnalisadasNaCelula: baseLojas.length,
         totalEncontradasNoRaio: filtradas.length,
         exibindo: sliced.length,
         lojas: sliced
