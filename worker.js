@@ -382,12 +382,19 @@ export default {
             cidade: lj.c,
             lat: lj.lat,
             lng: lj.lng,
+            cnpj: lj.cnpj || null,
+            cnae: lj.cnae || null,
+            endereco: lj.end || null,
+            cep: lj.cep || null,
+            telefone: lj.tel || null,
             situacaoPresumida: 'ATIVA',
             distanciaKm: Number(dist.toFixed(2)),
             distanciaMetros: Math.round(dist * 1000),
             tempoAPeMin: Math.max(1, Math.round((dist / 4.5) * 60)),
             tempoMotoMin: Math.max(1, Math.round((dist / 32.0) * 60)),
-            cnpjProBuscaUrl: `https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=${encodeURIComponent(lj.n)}`
+            cnpjProBuscaUrl: lj.cnpj
+              ? `https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/${lj.cnpj}`
+              : `https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=${encodeURIComponent(lj.n)}`
           });
         }
       }

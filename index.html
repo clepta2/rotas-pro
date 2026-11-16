@@ -941,10 +941,17 @@
         mapEngine.setCustomPin({ lat: store.lat, lng: store.lng });
         lastClickedCoords = { lat: store.lat, lng: store.lng };
         window._selectedStoreName = store.nome;
+        window._selectedStoreCnpj = store.cnpj || null;
         const popup = document.getElementById('map-place-popup');
         popup.style.display = 'block';
-        document.getElementById('popup-place-title').textContent = store.nome + ' • ' + store.situacaoPresumida;
-        document.getElementById('popup-place-addr').textContent = store.categoria.toUpperCase() + ' (' + store.subcategoria + ') — ' + store.distanciaMetros + 'm de distância (' + store.cidade + ')';
+        document.getElementById('popup-place-title').textContent = store.nome + ' • ATIVA' + (store.cnpj ? ' (CNPJ ' + store.cnpj.replace(/^(d{2})(d{3})(d{3})(d{4})(d{2})$/, '$1.$2.$3/$4-$5') + ')' : '');
+        const extra = [
+          store.categoria.toUpperCase() + ' (' + store.subcategoria + ')',
+          store.endereco ? store.endereco + (store.cep ? ' — CEP ' + store.cep : '') : '',
+          store.telefone ? 'Tel: ' + store.telefone : '',
+          store.distanciaMetros + 'm de distância (' + store.cidade + ')'
+        ].filter(Boolean).join(' • ');
+        document.getElementById('popup-place-addr').textContent = extra;
         document.getElementById('popup-place-coords').textContent = store.lat.toFixed(5) + ', ' + store.lng.toFixed(5);
         document.getElementById('btn-popup-cnpj').style.display = 'inline-flex';
       }
@@ -991,11 +998,15 @@
 
     document.getElementById('btn-popup-cnpj')?.addEventListener('click', async () => {
       const nome = window._selectedStoreName;
-      if (!nome) return;
+      const cnpj = window._selectedStoreCnpj;
+      if (!nome && !cnpj) return;
       showToast('Consultando Receita Federal via CNPJ Pro...');
       const t0 = performance.now();
       try {
-        const r = await fetch('https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=' + encodeURIComponent(nome));
+        const endpoint = cnpj
+          ? 'https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/' + cnpj
+          : 'https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=' + encodeURIComponent(nome);
+        const r = await fetch(endpoint);
         const d = await r.json();
         renderJson(d, Math.max(1, Math.round(performance.now() - t0)));
       } catch (err) {
