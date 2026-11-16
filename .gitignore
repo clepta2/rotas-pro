@@ -1,6 +1,7 @@
 node_modules/
 .wrangler/
 tmp_tiles/
+tmp_tiles_all/
 *.pbf
 .DS_Store
 
