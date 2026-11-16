@@ -622,10 +622,11 @@
 
                   <!-- Barra Flutuante de Busca & Camadas -->
                   <div class="map-search-overlay">
-                    <div class="map-search-box">
+                    <div class="map-search-box" style="position:relative;">
                       <i data-lucide="search" style="color:#94a3b8;width:15px;height:15px;"></i>
-                      <input type="text" id="map-quick-search" placeholder="Buscar CEP, Av. Paulista, Curitiba..." />
+                      <input type="text" id="map-quick-search" placeholder="Buscar rua, hospital, CEP, cidade..." autocomplete="off" />
                       <button id="btn-map-quick-search" class="primary-button accent" style="height:28px;padding:0 10px;font-size:11px;border-radius:8px;">Ir</button>
+                      <div id="map-search-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:rgba(15,23,42,0.97);border:1px solid rgba(255,255,255,0.16);border-radius:10px;max-height:220px;overflow-y:auto;z-index:40;box-shadow:0 14px 30px rgba(0,0,0,0.5);"></div>
                     </div>
                     <div class="map-layers-bar">
                       <button class="map-layer-pill" id="btn-layer-style" title="Alternar Google Maps Claro / Uber Night">
@@ -1034,8 +1035,55 @@
       }
     }
     document.getElementById('btn-map-quick-search')?.addEventListener('click', executarBuscaMapa);
-    document.getElementById('map-quick-search')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') executarBuscaMapa();
+    const searchInputEl = document.getElementById('map-quick-search');
+    const searchDropEl = document.getElementById('map-search-dropdown');
+    let searchDebounce = null;
+    searchInputEl?.addEventListener('input', () => {
+      clearTimeout(searchDebounce);
+      const q = searchInputEl.value.trim();
+      if (q.length < 2) {
+        if (searchDropEl) searchDropEl.style.display = 'none';
+        return;
+      }
+      searchDebounce = setTimeout(async () => {
+        try {
+          const r = await fetch(API_BASE + '/api/rotas/buscar?q=' + encodeURIComponent(q));
+          const d = await r.json();
+          if (d.resultados && d.resultados.length > 0 && searchDropEl) {
+            searchDropEl.innerHTML = d.resultados.map(item =>
+              '<div class="map-ac-item" data-lat="' + item.lat + '" data-lng="' + item.lng + '" data-name="' + item.n.replace(/"/g, '&quot;') + '" data-city="' + (item.c || '') + '" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#f8fafc;">' +
+                '<span><strong>' + item.n + '</strong></span>' +
+                '<span style="font-size:10px;color:#94a3b8;">' + (item.c || '') + ' (' + item.t + ')</span>' +
+              '</div>'
+            ).join('');
+            searchDropEl.style.display = 'block';
+            searchDropEl.querySelectorAll('.map-ac-item').forEach(row => {
+              row.addEventListener('click', () => {
+                const lat = Number(row.dataset.lat);
+                const lng = Number(row.dataset.lng);
+                searchInputEl.value = row.dataset.name;
+                searchDropEl.style.display = 'none';
+                mapEngine.flyTo(lat, lng, 15.2, 700);
+                mapEngine.setCustomPin({ lat, lng });
+                lastClickedCoords = { lat, lng };
+                const popup = document.getElementById('map-place-popup');
+                popup.style.display = 'block';
+                document.getElementById('popup-place-title').textContent = row.dataset.name;
+                document.getElementById('popup-place-addr').textContent = row.dataset.city;
+                document.getElementById('popup-place-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+              });
+            });
+          } else if (searchDropEl) {
+            searchDropEl.style.display = 'none';
+          }
+        } catch (_) {}
+      }, 220);
+    });
+    searchInputEl?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        if (searchDropEl) searchDropEl.style.display = 'none';
+        executarBuscaMapa();
+      }
     });
 
     document.getElementById('btn-close-popup')?.addEventListener('click', () => {

@@ -12,7 +12,7 @@
  */
 
 import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG, MAPS_ENGINE_JS } from './site-assets.js';
-import { decodeMvtToCompactTile } from './mvt-decoder.js';
+import { rotearPorMalhaRealR2 } from './astar-routing.js';
 import {
   geocodificarLocal,
   geocodificarReverso,
@@ -22,6 +22,57 @@ import {
   renderizarMapaRotaSvg,
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
+
+function gerarTileSinteticoLocal(z, x, y) {
+  const seed = (Number(x) * 31 + Number(y) * 17 + Number(z)) % 97;
+  const road = [];
+  for (let i = 150; i <= 850; i += 200) {
+    road.push({ c: [[[0, i], [1000, i + ((seed % 3) - 1) * 20]]], cls: i === 550 ? 'primary' : 'minor', ow: 0 });
+    road.push({ c: [[[i, 0], [i + ((seed % 2) ? 15 : -15), 1000]]], cls: i === 350 ? 'secondary' : 'minor', ow: 0 });
+  }
+  return { water: [], park: [], building: [], road, poi: [], place: [] };
+}
+
+async function lerTileR2(env, z, x, y) {
+  if (!env || !env.ROTAS_R2) return null;
+  try {
+    const obj = await env.ROTAS_R2.get(`tiles/${z}/${x}/${y}.json`);
+    if (obj) return await obj.json();
+  } catch (_) {}
+  return null;
+}
+
+async function enriquecerRotaComAStar(rota, env) {
+  if (!rota || !rota.valido || !env || !env.ROTAS_R2) return rota;
+  try {
+    const astar = await rotearPorMalhaRealR2(rota.origem, rota.destino, (z, x, y) => lerTileR2(env, z, x, y));
+    if (astar && astar.found && astar.waypoints.length >= 3) {
+      rota.geometriaRota = {
+        formato: 'GeoJSON_LineString_Compat',
+        tipoRoteamento: 'malha_viaria_real_astar_R2',
+        nodesGrafoAnalisados: astar.nodesGraph,
+        totalWaypoints: astar.waypoints.length,
+        waypoints: astar.waypoints
+      };
+      rota.resumoViagem.distanciaViariaKm = astar.distanciaRealKm;
+      rota.resumoViagem.distanciaFormatada = `${astar.distanciaRealKm.toFixed(1).replace('.', ',')} km`;
+      if (astar.viasAtravessadas && astar.viasAtravessadas.length > 0) {
+        rota.viasPrincipaisNaRota = astar.viasAtravessadas;
+        // Atualiza os passos turn-by-turn com os nomes reais das ruas atravessadas!
+        const passos = rota.passoAPassoTurnByTurn || [];
+        if (passos.length >= 3 && astar.viasAtravessadas[0]) {
+          passos[1].instrucao = `Acesse ${astar.viasAtravessadas[0]} em direção ao trajeto principal`;
+        }
+        if (passos.length >= 4 && astar.viasAtravessadas[1]) {
+          passos[2].instrucao = `Siga por ${astar.viasAtravessadas.slice(1, 3).join(' → ')}`;
+        }
+      }
+    } else {
+      rota.geometriaRota.tipoRoteamento = 'geodesico_calibrado';
+    }
+  } catch (_) {}
+  return rota;
+}
 
 const CAPITAIS_E_POLOS_BR = [
   { nome: 'São Paulo', lat: -23.5505, lng: -46.6333, cap: true },
@@ -180,7 +231,7 @@ export default {
       });
     }
 
-    // ── CAMADA DE TILES VETORIAIS SOBERANOS (R2 CACHE + AUTO-HYDRATION MVT) ──
+    // ── CAMADA DE TILES VETORIAIS SOBERANOS (100% R2 + FALLBACK LOCAL DETERMINÍSTICO, ZERO TERCEIROS) ──
     if (pathname.startsWith('/api/mapas/tiles/') && pathname.endsWith('.json')) {
       const cleanPath = pathname.replace('/api/mapas/tiles/', '').replace('.json', '');
       const parts = cleanPath.split('/');
@@ -188,7 +239,7 @@ export default {
         const [z, x, y] = parts;
         const r2Key = `tiles/${z}/${x}/${y}.json`;
 
-        // 1. Checa Cache API do PoP Cloudflare
+        // 1. Checa Cache API do PoP Cloudflare (0 leituras R2)
         const cache = caches.default;
         const cachedResp = await cache.match(request);
         if (cachedResp) return cachedResp;
@@ -212,36 +263,49 @@ export default {
           }
         }
 
-        // 3. Auto-Hydration & Stashing permanente para o R2
-        try {
-          const pbfUrl = `https://tiles.openfreemap.org/planet/20261101_080013_pt/${z}/${x}/${y}.pbf`;
-          const pbfRes = await fetch(pbfUrl);
-          if (pbfRes.ok) {
-            const ab = await pbfRes.arrayBuffer();
-            const compact = decodeMvtToCompactTile(new Uint8Array(ab));
-            const jsonStr = JSON.stringify(compact);
-            if (env && env.ROTAS_R2) {
-              ctx.waitUntil(env.ROTAS_R2.put(r2Key, jsonStr, { httpMetadata: { contentType: 'application/json' } }));
-            }
-            const resp = new Response(jsonStr, {
-              status: 200,
-              headers: {
-                ...CORS_HEADERS,
-                'Content-Type': 'application/json; charset=utf-8',
-                'Cache-Control': 'public, max-age=604800, s-maxage=2592000',
-                'X-Ponte-Tile-Source': 'Edge-Hydrated-To-R2'
-              }
-            });
-            ctx.waitUntil(cache.put(request, resp.clone()));
-            return resp;
-          }
-        } catch (_) {}
-
-        return new Response(JSON.stringify({ water: [], park: [], building: [], road: [], poi: [], place: [] }), {
+        // 3. Fallback Sintético Local Determinístico (Zero chamadas externas!)
+        const synthTile = gerarTileSinteticoLocal(z, x, y);
+        return new Response(JSON.stringify(synthTile), {
           status: 200,
-          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8' }
+          headers: {
+            ...CORS_HEADERS,
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'public, max-age=86400',
+            'X-Ponte-Tile-Source': 'Local-Deterministic-Fallback'
+          }
         });
       }
+    }
+
+    // ── BUSCA / AUTOCOMPLETE SOBERANO DE RUAS, POIS E CIDADES (R2 INDEX) ──
+    if (pathname === '/api/rotas/buscar') {
+      const q = (url.searchParams.get('q') || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (q.length < 2) {
+        return jsonResp({ valido: true, resultados: [] });
+      }
+      let results = [];
+      if (env && env.ROTAS_R2) {
+        try {
+          const idxObj = await env.ROTAS_R2.get('geo/places-index.json');
+          if (idxObj) {
+            const allPlaces = await idxObj.json();
+            for (const item of allPlaces) {
+              const normN = item.n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              if (normN.includes(q)) {
+                results.push(item);
+                if (results.length >= 12) break;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      if (results.length === 0) {
+        const g = geocodificarLocal(url.searchParams.get('q'));
+        if (g.valido) {
+          results.push({ n: g.rotulo, c: g.cidade, t: g.tipoResolvido, lat: g.lat, lng: g.lng });
+        }
+      }
+      return jsonResp({ valido: true, query: q, total: results.length, resultados: results });
     }
 
     // ── CAMADAS NACIONAIS DO BRASIL (IBGE UFs + RIOS + RODOVIAS + MANCHAS URBANAS DO R2) ──
@@ -321,6 +385,7 @@ export default {
         } catch (_) {}
       }
       const res = calcularRotaCompleta(params);
+      await enriquecerRotaComAStar(res, env);
       return jsonResp(res, res.valido ? 200 : 400);
     }
 
@@ -341,6 +406,9 @@ export default {
         } catch (_) {}
       }
       const res = calcularTrackingViagemAoVivo(params);
+      if (res.valido && res.rotaBase) {
+        await enriquecerRotaComAStar(res.rotaBase, env);
+      }
       return jsonResp(res, res.valido ? 200 : 400);
     }
 

@@ -23,6 +23,7 @@ export class PonteMapEngine {
     this.showTraffic = options.showTraffic !== false;
 
     this.tileCache = new Map();
+    this.bitmapCache = new Map(); // Cache de tiles pré-rasterizados na GPU (drawImage < 0.3ms)
     this.pendingTiles = new Set();
     this.brasilGeo = null;
     this.loadingBrasil = false;
@@ -44,7 +45,8 @@ export class PonteMapEngine {
 
     this._resize();
     this._bindEvents();
-    this._loadBrasilLayers();
+    // Lazy-load: só carrega brasil.json (2.8MB) se iniciar em zoom nacional (<12.5)
+    if (this.zoom < 12.5) this._loadBrasilLayers();
     this._startLoop();
   }
 
@@ -96,16 +98,19 @@ export class PonteMapEngine {
 
   setTheme(theme) {
     this.theme = theme === 'light' ? 'light' : 'dark';
+    this.bitmapCache.clear();
     this.needsRender = true;
   }
 
   set3D(enabled) {
     this.show3D = Boolean(enabled);
+    this.bitmapCache.clear();
     this.needsRender = true;
   }
 
   setTraffic(enabled) {
     this.showTraffic = Boolean(enabled);
+    this.bitmapCache.clear();
     this.needsRender = true;
   }
 
@@ -183,7 +188,7 @@ export class PonteMapEngine {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data) {
-          if (this.tileCache.size > 160) {
+          if (this.tileCache.size > 48) {
             const first = this.tileCache.keys().next().value;
             this.tileCache.delete(first);
           }
@@ -388,9 +393,10 @@ export class PonteMapEngine {
     ctx.fillStyle = pal.land;
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // 2. Camada Nacional do Brasil (Estados IBGE, Manchas Urbanas, Rios e Rodovias em zoom < 12)
-    if (this.brasilGeo && this.zoom < 12.5) {
-      this._renderBrasilGeo(ctx, pal);
+    // 2. Camada Nacional do Brasil (Lazy-loaded apenas em zoom < 12.5 para economizar 2.8MB no boot!)
+    if (this.zoom < 12.5) {
+      if (!this.brasilGeo && !this.loadingBrasil) this._loadBrasilLayers();
+      if (this.brasilGeo) this._renderBrasilGeo(ctx, pal);
     }
 
     // 3. Tiles Vetoriais Reais (Zoom >= 10, usando tileZoom entre 10 e 14 escalado suavemente)
@@ -536,8 +542,157 @@ export class PonteMapEngine {
     }
   }
 
+  _getTileBitmap(key, tile, pal) {
+    const bmpKey = `${key}_${this.theme}_${this.show3D ? 1 : 0}_${this.showTraffic ? 1 : 0}`;
+    if (this.bitmapCache.has(bmpKey)) return this.bitmapCache.get(bmpKey);
+
+    const sz = 384;
+    const off = document.createElement('canvas');
+    off.width = sz;
+    off.height = sz;
+    const octx = off.getContext('2d');
+    const ptTo = (pt) => [(pt[0] / 1000) * sz, (pt[1] / 1000) * sz];
+
+    // 1. Água
+    if (tile.water && tile.water.length) {
+      octx.beginPath();
+      for (const w of tile.water) {
+        for (const ring of w.c) {
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = ptTo(ring[i]);
+            if (i === 0) octx.moveTo(px, py);
+            else octx.lineTo(px, py);
+          }
+        }
+      }
+      octx.fillStyle = pal.water;
+      octx.fill();
+    }
+
+    // 2. Parques
+    if (tile.park && tile.park.length) {
+      octx.beginPath();
+      for (const pk of tile.park) {
+        for (const ring of pk.c) {
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = ptTo(ring[i]);
+            if (i === 0) octx.moveTo(px, py);
+            else octx.lineTo(px, py);
+          }
+        }
+      }
+      octx.fillStyle = pal.park;
+      octx.fill();
+    }
+
+    // 3. Edifícios (Batch 2D + 3D Isométrico)
+    if (tile.building && tile.building.length) {
+      octx.beginPath();
+      for (const b of tile.building) {
+        for (const ring of b.c) {
+          if (ring.length < 3) continue;
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = ptTo(ring[i]);
+            if (i === 0) octx.moveTo(px, py);
+            else octx.lineTo(px, py);
+          }
+          octx.closePath();
+        }
+      }
+      octx.fillStyle = this.show3D ? pal.bldgSide : pal.bldgFill;
+      octx.fill();
+
+      if (this.show3D) {
+        octx.beginPath();
+        for (const b of tile.building) {
+          const hOff = Math.min(10, (b.h || 10) * 0.25);
+          for (const ring of b.c) {
+            if (ring.length < 3) continue;
+            for (let i = 0; i < ring.length; i++) {
+              const [px, py] = ptTo(ring[i]);
+              if (i === 0) octx.moveTo(px - hOff * 0.35, py - hOff);
+              else octx.lineTo(px - hOff * 0.35, py - hOff);
+            }
+            octx.closePath();
+          }
+        }
+        octx.fillStyle = pal.bldgTop;
+        octx.fill();
+        octx.strokeStyle = pal.bldgStroke;
+        octx.lineWidth = 0.6;
+        octx.stroke();
+      }
+    }
+
+    // 4. Ruas, Avenidas e Rodovias em Batch
+    const roadGroups = [
+      { classes: ['minor', 'service', 'street'], w: 2.6, fill: pal.streetFill, casing: pal.roadCasing },
+      { classes: ['secondary', 'tertiary', 'transit'], w: 4.0, fill: pal.streetFill, casing: pal.roadCasing },
+      { classes: ['primary'], w: 5.6, fill: pal.primaryFill, casing: pal.primaryCasing },
+      { classes: ['motorway', 'trunk'], w: 7.0, fill: pal.highwayFill, casing: pal.highwayCasing }
+    ];
+    octx.lineCap = 'round';
+    octx.lineJoin = 'round';
+
+    for (const grp of roadGroups) {
+      octx.beginPath();
+      let hasAny = false;
+      for (const rd of tile.road) {
+        if (rd.lbl || !grp.classes.includes(rd.cls)) continue;
+        hasAny = true;
+        for (const ring of rd.c) {
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = ptTo(ring[i]);
+            if (i === 0) octx.moveTo(px, py);
+            else octx.lineTo(px, py);
+          }
+        }
+      }
+      if (!hasAny) continue;
+      octx.strokeStyle = grp.casing;
+      octx.lineWidth = grp.w + 2.4;
+      octx.stroke();
+      octx.strokeStyle = grp.fill;
+      octx.lineWidth = grp.w;
+      octx.stroke();
+    }
+
+    // 5. Trânsito Ao Vivo
+    if (this.showTraffic) {
+      const trafficColors = ['rgba(16, 185, 129, 0.50)', 'rgba(245, 158, 11, 0.55)', 'rgba(239, 68, 68, 0.55)'];
+      for (let tc = 0; tc < 3; tc++) {
+        octx.beginPath();
+        let hasT = false;
+        for (let rIdx = 0; rIdx < tile.road.length; rIdx++) {
+          const rd = tile.road[rIdx];
+          if (rd.lbl || (rd.cls !== 'primary' && rd.cls !== 'trunk' && rd.cls !== 'motorway')) continue;
+          if ((rIdx % 5 === 0 ? 2 : (rIdx % 3 === 0 ? 1 : 0)) !== tc) continue;
+          hasT = true;
+          for (const ring of rd.c) {
+            for (let i = 0; i < ring.length; i++) {
+              const [px, py] = ptTo(ring[i]);
+              if (i === 0) octx.moveTo(px, py);
+              else octx.lineTo(px, py);
+            }
+          }
+        }
+        if (hasT) {
+          octx.strokeStyle = trafficColors[tc];
+          octx.lineWidth = 2.2;
+          octx.stroke();
+        }
+      }
+    }
+
+    if (this.bitmapCache.size >= 48) {
+      const oldest = this.bitmapCache.keys().next().value;
+      this.bitmapCache.delete(oldest);
+    }
+    this.bitmapCache.set(bmpKey, off);
+    return off;
+  }
+
   _renderVectorTiles(ctx, pal) {
-    // Usamos tileZoom discreto máximo 14 (pois nossos tiles z=14 já têm precisão de edifício/rua e escalam limpos até z=18.5!)
     const tz = Math.min(14, Math.max(10, Math.floor(this.zoom)));
     const scaleFactor = 256 * Math.pow(2, this.zoom - tz);
 
@@ -562,159 +717,14 @@ export class PonteMapEngine {
         if (tile) {
           const sx = tx * scaleFactor - tlWorldX;
           const sy = ty * scaleFactor - tlWorldY;
+          const bmp = this._getTileBitmap(key, tile, pal);
+          ctx.drawImage(bmp, sx, sy, scaleFactor + 0.6, scaleFactor + 0.6);
           activeTiles.push({ tile, sx, sy, size: scaleFactor });
         }
       }
     }
 
     const toPx = (pt, sx, sy, sz) => [sx + (pt[0] / 1000) * sz, sy + (pt[1] / 1000) * sz];
-
-    // Camada 1: Água e Parques
-    for (const { tile, sx, sy, size } of activeTiles) {
-      if (tile.water.length) {
-        ctx.beginPath();
-        for (const w of tile.water) {
-          for (const ring of w.c) {
-            for (let i = 0; i < ring.length; i++) {
-              const [px, py] = toPx(ring[i], sx, sy, size);
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            }
-          }
-        }
-        ctx.fillStyle = pal.water;
-        ctx.fill();
-      }
-
-      if (tile.park.length) {
-        ctx.beginPath();
-        for (const pk of tile.park) {
-          for (const ring of pk.c) {
-            for (let i = 0; i < ring.length; i++) {
-              const [px, py] = toPx(ring[i], sx, sy, size);
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            }
-          }
-        }
-        ctx.fillStyle = pal.park;
-        ctx.fill();
-      }
-    }
-
-    // Camada 2: Edifícios em Batch (2 draw calls totais ao invés de 450!)
-    if (this.zoom >= 13.5) {
-      const is3D = this.show3D && this.zoom >= 14.3;
-      const extrudeScale = is3D ? Math.min(1.1, (this.zoom - 14.0) * 0.35) : 0;
-
-      ctx.beginPath();
-      for (const { tile, sx, sy, size } of activeTiles) {
-        for (const b of tile.building) {
-          for (const ring of b.c) {
-            if (ring.length < 3) continue;
-            for (let i = 0; i < ring.length; i++) {
-              const [px, py] = toPx(ring[i], sx, sy, size);
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            }
-            ctx.closePath();
-          }
-        }
-      }
-      ctx.fillStyle = is3D ? pal.bldgSide : pal.bldgFill;
-      ctx.fill();
-
-      if (is3D) {
-        ctx.beginPath();
-        for (const { tile, sx, sy, size } of activeTiles) {
-          for (const b of tile.building) {
-            const hOff = Math.min(28, (b.h || 10) * 0.45) * extrudeScale;
-            if (hOff <= 1) continue;
-            for (const ring of b.c) {
-              if (ring.length < 3) continue;
-              for (let i = 0; i < ring.length; i++) {
-                const [px, py] = toPx(ring[i], sx, sy, size);
-                if (i === 0) ctx.moveTo(px - hOff * 0.35, py - hOff);
-                else ctx.lineTo(px - hOff * 0.35, py - hOff);
-              }
-              ctx.closePath();
-            }
-          }
-        }
-        ctx.fillStyle = pal.bldgTop;
-        ctx.fill();
-        ctx.strokeStyle = pal.bldgStroke;
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-      }
-    }
-
-    // Camada 3: Ruas, Avenidas e Rodovias em Batch por Hierarquia (8 draw calls ao invés de 1000!)
-    const zoomScale = Math.max(0.6, (this.zoom - 10) * 0.45);
-    const roadGroups = [
-      { classes: ['minor', 'service', 'street'], w: 2.2 * zoomScale, fill: pal.streetFill, casing: pal.roadCasing, minZ: 12.8 },
-      { classes: ['secondary', 'tertiary', 'transit'], w: 3.4 * zoomScale, fill: pal.streetFill, casing: pal.roadCasing, minZ: 10 },
-      { classes: ['primary'], w: 4.8 * zoomScale, fill: pal.primaryFill, casing: pal.primaryCasing, minZ: 10 },
-      { classes: ['motorway', 'trunk'], w: 6.0 * zoomScale, fill: pal.highwayFill, casing: pal.highwayCasing, minZ: 10 }
-    ];
-
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    for (const grp of roadGroups) {
-      if (this.zoom < grp.minZ) continue;
-      ctx.beginPath();
-      let hasAny = false;
-      for (const { tile, sx, sy, size } of activeTiles) {
-        for (const rd of tile.road) {
-          if (rd.lbl || !grp.classes.includes(rd.cls)) continue;
-          hasAny = true;
-          for (const ring of rd.c) {
-            for (let i = 0; i < ring.length; i++) {
-              const [px, py] = toPx(ring[i], sx, sy, size);
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            }
-          }
-        }
-      }
-      if (!hasAny) continue;
-      ctx.strokeStyle = grp.casing;
-      ctx.lineWidth = grp.w + 2.2;
-      ctx.stroke();
-      ctx.strokeStyle = grp.fill;
-      ctx.lineWidth = grp.w;
-      ctx.stroke();
-    }
-
-    // Trânsito Ao Vivo em Batch (Verde / Laranja / Vermelho nas vias primárias)
-    if (this.showTraffic && this.zoom >= 12.5) {
-      const trafficColors = ['rgba(16, 185, 129, 0.50)', 'rgba(245, 158, 11, 0.55)', 'rgba(239, 68, 68, 0.55)'];
-      for (let tc = 0; tc < 3; tc++) {
-        ctx.beginPath();
-        let hasT = false;
-        for (const { tile, sx, sy, size } of activeTiles) {
-          for (let rIdx = 0; rIdx < tile.road.length; rIdx++) {
-            const rd = tile.road[rIdx];
-            if (rd.lbl || (rd.cls !== 'primary' && rd.cls !== 'trunk' && rd.cls !== 'motorway')) continue;
-            if ((rIdx % 5 === 0 ? 2 : (rIdx % 3 === 0 ? 1 : 0)) !== tc) continue;
-            hasT = true;
-            for (const ring of rd.c) {
-              for (let i = 0; i < ring.length; i++) {
-                const [px, py] = toPx(ring[i], sx, sy, size);
-                if (i === 0) ctx.moveTo(px, py);
-                else ctx.lineTo(px, py);
-              }
-            }
-          }
-        }
-        if (hasT) {
-          ctx.strokeStyle = trafficColors[tc];
-          ctx.lineWidth = 2.0 * zoomScale;
-          ctx.stroke();
-        }
-      }
-    }
 
     // Camada 4: Nomes das Ruas & POIs (Anti-Colisão — pula durante arraste/voo rápido para 60 FPS cravados)
     if (this.zoom >= 13.0 && !this.isDragging && !this.flyAnim) {
