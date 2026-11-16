@@ -859,7 +859,7 @@ ${ponteIconsCode}
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=2.0.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=3.0.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
@@ -912,6 +912,11 @@ ${ponteIconsCode}
         document.getElementById('popup-place-addr').textContent = extra;
         document.getElementById('popup-place-coords').textContent = store.lat.toFixed(5) + ', ' + store.lng.toFixed(5);
         document.getElementById('btn-popup-cnpj').style.display = 'inline-flex';
+      },
+      onMoveEnd: () => {
+        if (document.getElementById('btn-layer-stores')?.classList.contains('is-active')) {
+          carregarLojasAtivasNoMapa();
+        }
       }
     });
 

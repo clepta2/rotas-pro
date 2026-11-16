@@ -138,12 +138,43 @@ async function run() {
   if (!csvFile) throw new Error('Arquivo CSV não encontrado após extração.');
   const csvPath = path.join(WORK_DIR, csvFile);
 
-  console.log(`[3/4] Lendo ${csvFile} em stream e geocodificando CNPJs ATIVOS (02)...`);
-  const shards = new Map(); // "x/y" -> []
-  const MAX_PER_SHARD = 1200; // Mantém cada shard z12 < 250KB para carregamento instantâneo
+  console.log(`[3/4] Lendo ${csvFile} em stream com flush incremental (RAM constante < 100MB)...`);
+  const shards = new Map();
+  const MAX_PER_SHARD = 1200;
+  let bufferCount = 0;
   let totalLinhas = 0;
   let totalAtivas = 0;
   let totalAdicionadas = 0;
+  let uploaded = 0;
+
+  async function flushShardsSuave() {
+    if (shards.size === 0) return;
+    const entries = Array.from(shards.entries());
+    shards.clear();
+    bufferCount = 0;
+
+    for (let i = 0; i < entries.length; i += 4) {
+      const batch = entries.slice(i, i + 4);
+      await Promise.all(batch.map(async ([sKey, newArr]) => {
+        const r2Key = `stores/12/${sKey}.json`;
+        let merged = newArr;
+        try {
+          const getRes = await s3Request('GET', r2Key);
+          if (getRes.ok) {
+            const existing = await getRes.json();
+            if (Array.isArray(existing) && existing.length > 0) {
+              merged = [...existing, ...newArr].slice(0, 1500);
+            }
+          }
+        } catch (_) {}
+        const buf = Buffer.from(JSON.stringify(merged), 'utf8');
+        const putRes = await s3Request('PUT', r2Key, buf);
+        if (putRes.ok) uploaded++;
+      }));
+      // Pausa suave de 40ms entre micro-lotes para evitar pico de CPU/rede
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  }
 
   const rl = readline.createInterface({
     input: fs.createReadStream(csvPath, { encoding: 'latin1' }),
@@ -201,46 +232,24 @@ async function run() {
       tel
     });
     totalAdicionadas++;
+    bufferCount++;
+
+    if (bufferCount >= 35000) {
+      rl.pause();
+      await flushShardsSuave();
+      rl.resume();
+    }
 
     if (totalLinhas % 500000 === 0) {
-      console.log(`  Linhas: ${(totalLinhas / 1e6).toFixed(1)}M | Ativas: ${totalAtivas} | Mapeadas em shards z12: ${totalAdicionadas} (${shards.size} células)`);
+      console.log(`  Linhas: ${(totalLinhas / 1e6).toFixed(1)}M | Ativas: ${totalAtivas} | Mapeadas: ${totalAdicionadas} | Shards R2 gravados: ${uploaded}`);
     }
   }
 
+  await flushShardsSuave();
   fs.unlinkSync(csvPath); // Limpa CSV gigante do disco
   fs.rmSync(WORK_DIR, { recursive: true, force: true });
 
-  console.log(`\n[4/4] Fazendo merge e upload paralelo via S3 SigV4 de ${shards.size} shards z12 para Cloudflare R2...`);
-  const entries = Array.from(shards.entries());
-  let uploaded = 0;
-
-  for (let i = 0; i < entries.length; i += 20) {
-    const batch = entries.slice(i, i + 20);
-    await Promise.all(batch.map(async ([sKey, newArr]) => {
-      const r2Key = `stores/12/${sKey}.json`;
-      let merged = newArr;
-      try {
-        const getRes = await s3Request('GET', r2Key);
-        if (getRes.ok) {
-          const existing = await getRes.json();
-          if (Array.isArray(existing) && existing.length > 0) {
-            // Prioriza lojas OSM reais + completa com CNPJs RFB até 1.500 por célula
-            merged = [...existing, ...newArr].slice(0, 1500);
-          }
-        }
-      } catch (_) {}
-
-      const buf = Buffer.from(JSON.stringify(merged), 'utf8');
-      const putRes = await s3Request('PUT', r2Key, buf);
-      if (putRes.ok) uploaded++;
-    }));
-
-    if (uploaded % 100 === 0 || i + 20 >= entries.length) {
-      console.log(`  Upload R2: ${uploaded}/${entries.length} shards z12 gravados!`);
-    }
-  }
-
-  console.log(`\nCONCLUÍDO! ${ZIP_NAME}: ${totalLinhas} linhas lidas | ${totalAtivas} empresas ATIVAS | ${totalAdicionadas} empresas RFB geocodificadas em ${uploaded} shards no R2!`);
+  console.log(`\nCONCLUÍDO! ${ZIP_NAME}: ${totalLinhas} linhas lidas | ${totalAtivas} empresas ATIVAS | ${totalAdicionadas} empresas RFB geocodificadas em ${uploaded} flushes de shards no R2!`);
 }
 
 run().catch((err) => {

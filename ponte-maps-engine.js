@@ -25,6 +25,11 @@ export class PonteMapEngine {
     this.tileCache = new Map();
     this.bitmapCache = new Map(); // Cache de tiles pré-rasterizados na GPU (drawImage < 0.3ms)
     this.pendingTiles = new Set();
+    this.tileQueue = [];
+    this.activeFetches = 0;
+    this.maxConcurrentFetches = 2; // Máx 2 tiles simultâneos (zero picos de rede/CPU)
+    this.moveDebounceTimer = null;
+    this.tileFetchPaused = false;
     this.brasilGeo = null;
     this.loadingBrasil = false;
 
@@ -36,6 +41,7 @@ export class PonteMapEngine {
     this.onMapClick = options.onMapClick || null;
     this.onStoreClick = options.onStoreClick || null;
     this.onZoomChange = options.onZoomChange || null;
+    this.onMoveEnd = options.onMoveEnd || null;
 
     this.isDragging = false;
     this.dragMoved = false;
@@ -200,25 +206,74 @@ export class PonteMapEngine {
     this.loadingBrasil = false;
   }
 
+  _scheduleMoveEnd() {
+    this.tileFetchPaused = true;
+    clearTimeout(this.moveDebounceTimer);
+    this.moveDebounceTimer = setTimeout(() => {
+      this.tileFetchPaused = false;
+      this.needsRender = true;
+      if (this.onMoveEnd) this.onMoveEnd({ lat: this.lat, lng: this.lng, zoom: this.zoom });
+    }, 180);
+  }
+
   _fetchTile(z, x, y) {
+    if (this.tileFetchPaused) return;
     const key = `${z}/${x}/${y}`;
     if (this.tileCache.has(key) || this.pendingTiles.has(key)) return;
-    this.pendingTiles.add(key);
+    if (this.tileQueue.some((t) => t.key === key)) return;
 
-    fetch(`${this.apiBase}/api/mapas/tiles/${z}/${x}/${y}.json`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data) {
-          if (this.tileCache.size > 48) {
-            const first = this.tileCache.keys().next().value;
-            this.tileCache.delete(first);
+    this.tileQueue.push({ key, z, x, y });
+    this._processTileQueue();
+  }
+
+  async _processTileQueue() {
+    while (this.activeFetches < this.maxConcurrentFetches && this.tileQueue.length > 0) {
+      const item = this.tileQueue.shift();
+      if (!item || this.tileCache.has(item.key) || this.pendingTiles.has(item.key)) continue;
+
+      this.pendingTiles.add(item.key);
+      this.activeFetches++;
+      const url = `${this.apiBase}/api/mapas/tiles/${item.z}/${item.x}/${item.y}.json`;
+
+      (async () => {
+        try {
+          let data = null;
+          // 1. Checa Cache Storage persistente do navegador (0ms, zero rede)
+          if (typeof caches !== 'undefined') {
+            try {
+              const cache = await caches.open('ponte-maps-tiles-v1');
+              const hit = await cache.match(url);
+              if (hit) data = await hit.json();
+              if (!data) {
+                const res = await fetch(url);
+                if (res.ok) {
+                  await cache.put(url, res.clone());
+                  data = await res.json();
+                }
+              }
+            } catch (_) {}
           }
-          this.tileCache.set(key, data);
-          this.needsRender = true;
+          if (!data) {
+            const res = await fetch(url);
+            if (res.ok) data = await res.json();
+          }
+
+          if (data) {
+            if (this.tileCache.size > 40) {
+              const first = this.tileCache.keys().next().value;
+              this.tileCache.delete(first);
+            }
+            this.tileCache.set(item.key, data);
+            this.needsRender = true;
+          }
+        } catch (_) {
+        } finally {
+          this.pendingTiles.delete(item.key);
+          this.activeFetches--;
+          this._processTileQueue();
         }
-      })
-      .catch(() => {})
-      .finally(() => this.pendingTiles.delete(key));
+      })();
+    }
   }
 
   _bindEvents() {
@@ -243,16 +298,20 @@ export class PonteMapEngine {
     });
 
     window.addEventListener('mouseup', (e) => {
-      if (this.isDragging && !this.dragMoved && e.target === this.canvas) {
-        const rect = this.canvas.getBoundingClientRect();
-        const sx = e.clientX - rect.left;
-        const sy = e.clientY - rect.top;
-        const hitStore = this._hitTestStore(sx, sy);
-        if (hitStore && this.onStoreClick) {
-          this.onStoreClick(hitStore);
-        } else {
-          const coords = this.screenToLatLng(sx, sy);
-          if (this.onMapClick) this.onMapClick(coords);
+      if (this.isDragging) {
+        if (!this.dragMoved && e.target === this.canvas) {
+          const rect = this.canvas.getBoundingClientRect();
+          const sx = e.clientX - rect.left;
+          const sy = e.clientY - rect.top;
+          const hitStore = this._hitTestStore(sx, sy);
+          if (hitStore && this.onStoreClick) {
+            this.onStoreClick(hitStore);
+          } else {
+            const coords = this.screenToLatLng(sx, sy);
+            if (this.onMapClick) this.onMapClick(coords);
+          }
+        } else if (this.dragMoved) {
+          this._scheduleMoveEnd();
         }
       }
       this.isDragging = false;
@@ -278,6 +337,7 @@ export class PonteMapEngine {
       const newCenter = PonteMapEngine.unproject(newCenterProj.x, newCenterProj.y, this.zoom);
       this.lat = newCenter.lat;
       this.lng = newCenter.lng;
+      this._scheduleMoveEnd();
       this.needsRender = true;
     }, { passive: false });
 
@@ -814,6 +874,7 @@ export class PonteMapEngine {
 
     const maxTileIdx = Math.pow(2, tz) - 1;
     const activeTiles = [];
+    let rasterizedThisFrame = 0;
 
     for (let tx = minTx; tx <= maxTx; tx++) {
       for (let ty = minTy; ty <= maxTy; ty++) {
@@ -824,9 +885,17 @@ export class PonteMapEngine {
         if (tile) {
           const sx = tx * scaleFactor - tlWorldX;
           const sy = ty * scaleFactor - tlWorldY;
-          const bmp = this._getTileBitmap(key, tile, pal);
-          ctx.drawImage(bmp, sx, sy, scaleFactor + 0.6, scaleFactor + 0.6);
-          activeTiles.push({ tile, sx, sy, size: scaleFactor });
+          const bmpKey = `${key}_${this.theme}_${this.show3D ? 1 : 0}_${this.showTraffic ? 1 : 0}`;
+          const alreadyBmp = this.bitmapCache.has(bmpKey);
+          if (alreadyBmp || rasterizedThisFrame < 1) {
+            if (!alreadyBmp) rasterizedThisFrame++;
+            const bmp = this._getTileBitmap(key, tile, pal);
+            ctx.drawImage(bmp, sx, sy, scaleFactor + 0.6, scaleFactor + 0.6);
+            activeTiles.push({ tile, sx, sy, size: scaleFactor });
+          } else {
+            // Agenda próximo frame suave sem travar CPU
+            setTimeout(() => { this.needsRender = true; }, 16);
+          }
         }
       }
     }
