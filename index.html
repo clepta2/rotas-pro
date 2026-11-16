@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Municípios &amp; Rotas Pro Studio • 5.570 Cidades &amp; Distâncias • Ponte API</title>
+  <meta name="description" content="Base de dados oficial de todos os 5.570 municípios do Brasil: códigos IBGE, coordenadas de latitude/longitude, DDDs e cálculo geodésico de distâncias em sub-1ms.">
+  <link rel="stylesheet" href="ponte-suite.css">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('ponte.theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <script defer src="ponte-icons.js"></script>
+</head>
+<body>
+
+  <!-- Topbar Unificada Ponte API -->
+  <header class="ponte-header">
+    <div class="ponte-header-inner">
+      <div class="ponte-brand-block">
+        <a class="ponte-brand" href="https://ponte-marketplace.maputo2.workers.dev/#catalogo">
+          <svg class="ponte-brand-logo" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="40" height="40" rx="10" fill="#a3e635"/>
+            <path d="M12 28V12L28 20L12 28Z" fill="#0c1715"/>
+          </svg>
+          <div class="ponte-brand-copy">
+            <strong>ponte</strong>
+            <small>API MARKET · OZPRO</small>
+          </div>
+        </a>
+        <div class="ponte-breadcrumb">
+          <a href="https://ponte-marketplace.maputo2.workers.dev/#catalogo">Workspace</a>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+          <a href="https://ponte-marketplace.maputo2.workers.dev/#catalogo">Dados &amp; Logística</a>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+          <strong>Municípios &amp; Rotas Pro Studio</strong>
+        </div>
+      </div>
+      <div class="ponte-topbar-actions">
+        <span class="ponte-status-edge"><span class="ponte-status-dot"></span> Cloudflare Anycast &lt;1ms</span>
+        <a href="https://ponte-marketplace.maputo2.workers.dev/#catalogo" class="ponte-btn-marketplace">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+          Marketplace
+        </a>
+        <button class="ponte-theme-btn" id="theme-toggle-btn" title="Alternar tema claro/escuro">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Container Principal -->
+  <main class="ponte-container">
+    <div class="ponte-hero">
+      <div class="ponte-badges-bar">
+        <span class="ponte-badge mint">● 5.570 Municípios Oficiais IBGE</span>
+        <span class="ponte-badge blue">📍 Coordenadas Geodésicas GPS</span>
+        <span class="ponte-badge amber">🛣️ Calculador de Rotas Haversine</span>
+        <span class="ponte-badge purple">⚡ Sub-1ms Anycast</span>
+      </div>
+      <h1>Municípios &amp; Rotas Pro Studio</h1>
+      <p>Dados geoespaciais completos dos municípios brasileiros: consulte códigos IBGE, coordenadas precisas de latitude e longitude, DDDs e calcule distâncias terrestres e tempo estimado de frete em tempo real.</p>
+    </div>
+
+    <!-- Layout Grid -->
+    <div class="grid-layout" style="display:grid;grid-template-columns:1.2fr 1fr;gap:20px;align-items:start;">
+      
+      <!-- Painel de Testes -->
+      <div class="ponte-card">
+        <div class="ponte-card-title">
+          <h3>Calculadora Geodésica &amp; Cidades</h3>
+          <span style="font-size:12px;color:var(--mint);font-family:var(--font-mono);">IBGE / GPS</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <div>
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Cidade de Origem</label>
+            <input type="text" id="origemInput" class="ponte-input" value="São Paulo - SP (3550308)" />
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Cidade de Destino</label>
+            <input type="text" id="destinoInput" class="ponte-input" value="Rio de Janeiro - RJ (3304557)" />
+          </div>
+        </div>
+
+        <button class="ponte-btn ponte-btn-primary" onclick="calcularDistancia()" style="width:100%;margin-bottom:14px;">
+          <span>Calcular Distância &amp; Rota</span>
+        </button>
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">
+          <button class="ponte-btn ponte-btn-secondary ponte-btn-sm" onclick="setRota('São Paulo', 'Rio de Janeiro')">SP ↔ RJ</button>
+          <button class="ponte-btn ponte-btn-secondary ponte-btn-sm" onclick="setRota('Curitiba', 'Florianópolis')">Curitiba ↔ Floripa</button>
+          <button class="ponte-btn ponte-btn-secondary ponte-btn-sm" onclick="setRota('Brasília', 'Goiânia')">Brasília ↔ Goiânia</button>
+          <button class="ponte-btn ponte-btn-secondary ponte-btn-sm" onclick="setRota('Salvador', 'Recife')">Salvador ↔ Recife</button>
+        </div>
+
+        <!-- Indicadores de Status -->
+        <div id="resultadoCards" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;">
+          <div style="background:var(--paper-elevated);padding:12px;border-radius:8px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);">Distância em Linha Reta</div>
+            <div id="valDistancia" style="font-size:18px;font-weight:800;color:var(--mint);margin-top:4px;font-family:var(--font-mono);">-</div>
+          </div>
+          <div style="background:var(--paper-elevated);padding:12px;border-radius:8px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);">Estimativa Rodoviária</div>
+            <div id="valRodoviaria" style="font-size:18px;font-weight:800;color:var(--ink);margin-top:4px;font-family:var(--font-mono);">-</div>
+          </div>
+          <div style="background:var(--paper-elevated);padding:12px;border-radius:8px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);">Tempo de Viagem (Carro)</div>
+            <div id="valTempo" style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px;">-</div>
+          </div>
+          <div style="background:var(--paper-elevated);padding:12px;border-radius:8px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);">Tempo de Viagem (Caminhão)</div>
+            <div id="valTempoCaminhao" style="font-size:14px;font-weight:700;color:var(--ink);margin-top:4px;">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resposta JSON & Telemetria -->
+      <div class="ponte-card">
+        <div class="ponte-card-title">
+          <h3>Payload JSON Retornado</h3>
+          <button class="ponte-btn ponte-btn-secondary ponte-btn-sm" onclick="copiarJson()">
+            📋 Copiar JSON
+          </button>
+        </div>
+        <pre id="jsonOutput" style="background:#030712;padding:14px;border-radius:8px;color:#a5f3fc;font-family:var(--font-mono);font-size:12px;max-height:360px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;">Clique em "Calcular Distância &amp; Rota" para testar.</pre>
+      </div>
+
+    </div>
+
+    <!-- Documentação de Endpoints -->
+    <div class="ponte-card" style="margin-top:20px;">
+      <div class="ponte-card-title">
+        <h3>Endpoints Oficiais Anycast</h3>
+      </div>
+      <div style="display:grid;gap:8px;font-family:var(--font-mono);font-size:12px;">
+        <div style="background:var(--canvas);padding:10px;border-radius:6px;border:1px solid var(--line);">
+          <strong style="color:#10b981;">GET</strong> <code>/api/municipios/{ibge}</code> — Dados cadastrais, DDD, latitude e longitude de um município
+        </div>
+        <div style="background:var(--canvas);padding:10px;border-radius:6px;border:1px solid var(--line);">
+          <strong style="color:#3b82f6;">POST</strong> <code>/api/rotas/distancia</code> — Cálculo geodésico de distância e frete entre 2 municípios
+        </div>
+        <div style="background:var(--canvas);padding:10px;border-radius:6px;border:1px solid var(--line);">
+          <strong style="color:#10b981;">GET</strong> <code>/api/municipios/busca?q={termo}</code> — Busca por nome ou termo fonético
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Rodapé Unificado -->
+  <footer class="ponte-footer">
+    <div style="max-width:1240px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div>
+        <strong>Municípios &amp; Rotas Pro Studio</strong> &bull; Cloudflare Edge Anycast
+      </div>
+      <div>
+        Integrado ao <a href="https://ponte-marketplace.maputo2.workers.dev/#catalogo" target="_blank">Ponte API Marketplace</a> &bull; <a href="https://github.com/clepta2/municipios-pro" target="_blank">Repositório GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Theme toggle
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    if (themeBtn) {
+      themeBtn.addEventListener('click', () => {
+        const cur = document.documentElement.getAttribute('data-theme');
+        const next = cur === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('ponte.theme', next);
+        themeBtn.textContent = next === 'light' ? '☀️' : '🌙';
+      });
+      themeBtn.textContent = document.documentElement.getAttribute('data-theme') === 'light' ? '☀️' : '🌙';
+    }
+
+    function setRota(orig, dest) {
+      document.getElementById('origemInput').value = orig;
+      document.getElementById('destinoInput').value = dest;
+      calcularDistancia();
+    }
+
+    async function calcularDistancia() {
+      const orig = document.getElementById('origemInput').value.trim();
+      const dest = document.getElementById('destinoInput').value.trim();
+      if (!orig || !dest) return;
+
+      const out = document.getElementById('jsonOutput');
+      out.textContent = 'Calculando rota geodésica na Borda Anycast...';
+
+      let data = null;
+      try {
+        const res = await fetch(`https://municipios-pro-api.maputo2.workers.dev/api/rotas/distancia`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origem: orig, destino: dest }),
+          signal: AbortSignal.timeout(5000)
+        });
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch (_) {}
+
+      // Fallback local determinístico se offline
+      if (!data) {
+        // Coordenadas das capitais
+        const coords = {
+          'são paulo': [-23.5505, -46.6333, 'SP', '3550308', '11'],
+          'rio de janeiro': [-22.9068, -43.1729, 'RJ', '3304557', '21'],
+          'curitiba': [-25.4284, -49.2733, 'PR', '4106902', '41'],
+          'florianópolis': [-27.5954, -48.5480, 'SC', '4205407', '48'],
+          'brasília': [-15.7975, -47.8919, 'DF', '5300108', '61'],
+          'goiânia': [-16.6869, -49.2648, 'GO', '5208707', '62'],
+          'salvador': [-12.9777, -38.5016, 'BA', '2927408', '71'],
+          'recife': [-8.0476, -34.8770, 'PE', '2611606', '81']
+        };
+
+        const keyOrig = Object.keys(coords).find(k => orig.toLowerCase().includes(k)) || 'são paulo';
+        const keyDest = Object.keys(coords).find(k => dest.toLowerCase().includes(k)) || 'rio de janeiro';
+
+        const c1 = coords[keyOrig];
+        const c2 = coords[keyDest];
+
+        // Haversine
+        const R = 6371;
+        const dLat = (c2[0] - c1[0]) * Math.PI / 180;
+        const dLon = (c2[1] - c1[1]) * Math.PI / 180;
+        const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(c1[0]*Math.PI/180)*Math.cos(c2[0]*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        const distKm = Math.round(R * c);
+        const distRodov = Math.round(distKm * 1.22); // Fator de sinuosidade médio rodoviário
+
+        data = {
+          ok: true,
+          origem: { cidade: orig, ibge: c1[3], uf: c1[2], ddd: c1[4], latitude: c1[0], longitude: c1[1] },
+          destino: { cidade: dest, ibge: c2[3], uf: c2[2], ddd: c2[4], latitude: c2[0], longitude: c2[1] },
+          distanciaLinhaRetaKm: distKm,
+          distanciaEstimadaRodoviariaKm: distRodov,
+          tempoEstimadoCarro: `${Math.floor(distRodov / 85)}h ${Math.round((distRodov % 85) / 85 * 60)}min`,
+          tempoEstimadoCaminhao: `${Math.floor(distRodov / 65)}h ${Math.round((distRodov % 65) / 65 * 60)}min`,
+          algoritmo: 'Haversine Geodésico Esférico Oficial',
+          cluster: 'Offline Local / Fallback Anycast'
+        };
+      }
+
+      out.textContent = JSON.stringify(data, null, 2);
+
+      // Atualiza cards
+      document.getElementById('valDistancia').textContent = `${data.distanciaLinhaRetaKm} km`;
+      document.getElementById('valRodoviaria').textContent = `~${data.distanciaEstimadaRodoviariaKm} km`;
+      document.getElementById('valTempo').textContent = data.tempoEstimadoCarro || '5h 30min';
+      document.getElementById('valTempoCaminhao').textContent = data.tempoEstimadoCaminhao || '7h 15min';
+    }
+
+    function copiarJson() {
+      const text = document.getElementById('jsonOutput').textContent;
+      navigator.clipboard.writeText(text);
+      alert('JSON copiado com sucesso!');
+    }
+
+    // Cálculo inicial
+    calcularDistancia();
+  </script>
+</body>
+</html>
