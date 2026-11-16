@@ -1,0 +1,12 @@
+name = "rotas-pro-api"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+account_id = "69a48d4ddb66b8ec51f460da8856cf2a"
+
+[vars]
+SERVICE_NAME = "Rotas & Mapas Pro API"
+ENVIRONMENT = "production"
+GITHUB_REPO = "clepta2/rotas-pro"
+DOCS_URL = "https://github.com/clepta2/rotas-pro"
+API_VERSION = "1.0.0"

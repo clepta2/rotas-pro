@@ -1,11 +1,13 @@
 {
   "name": "rotas-pro",
   "version": "1.0.0",
-  "description": "API e motor geoespacial de cálculo de rotas e distâncias entre todos os 5.570 municípios do Brasil",
+  "description": "API Soberana de Mapas, Rotas, Tracking de Entregas (Uber/iFood), Pedagios ANTT e Otimizador TSP Multi-Paradas na Cloudflare Edge",
   "type": "module",
+  "main": "rotas-pro.js",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "deploy": "wrangler deploy"
   },
-  "keywords": ["rotas", "distancias", "ibge", "municipios", "logistica"],
+  "author": "clepta2",
   "license": "MIT"
 }
