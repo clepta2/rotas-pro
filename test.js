@@ -120,6 +120,65 @@ const svgDark = renderizarMapaRotaSvg({
 assert(svgDark.includes('<svg') && svgDark.includes('BRA2E19'), 'Renderizador SVG deve produzir mapa vetorial contendo a placa e o veículo');
 assert(svgDark.includes('PROGRESSO DA ENTREGA: 65%'), 'Renderizador SVG deve exibir barra de progresso em 65%');
 
+console.log('\n8. Topografia, Sinalização Viária e Pedágios (R2 simulado em memória):');
+{
+  const { gzipSync } = await import('zlib');
+  const sinal = await import('./sinalizacao.js');
+  const store = new Map();
+  const tileOf = (lat, lng, z) => {
+    const n = 2 ** z;
+    const fx = ((lng + 180) / 360) * n;
+    const lr = (lat * Math.PI) / 180;
+    const fy = ((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2) * n;
+    return { x: Math.floor(fx), y: Math.floor(fy) };
+  };
+  // Rampa de 700 m → 900 m de oeste para leste no tile z12 da Paulista
+  const tz = tileOf(-23.5614, -46.6558, 12);
+  const grid = new Int16Array(128 * 128);
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) grid[y * 128 + x] = 700 + Math.round((x / 127) * 200);
+  store.set(`terrain/12/${tz.x}/${tz.y}.bin`, gzipSync(Buffer.from(grid.buffer)));
+  store.set(`sinal/12/${tz.x}/${tz.y}.json`, JSON.stringify({
+    s: [[-23.5614, -46.6560], [-23.5620, -46.6550]],
+    r: [[-23.5612, -46.6555, 50]],
+    l: [[-23.5615, -46.6557]],
+    v: [[50, 3, 'Avenida Paulista', [-23.5600, -46.6580, -23.5630, -46.6530]]]
+  }));
+  store.set('geo/pedagios-osm.json', JSON.stringify([[-23.0, -47.0, 'Praça Teste', 'Concessionária X', 'SP-348']]));
+  const env = {
+    ROTAS_R2: {
+      async get(k) {
+        if (!store.has(k)) return null;
+        const v = store.get(k);
+        const buf = Buffer.isBuffer(v) ? v : Buffer.from(v, 'utf8');
+        return { body: new Response(buf).body, json: async () => JSON.parse(buf.toString('utf8')) };
+      }
+    }
+  };
+
+  const e = await sinal.elevacaoEm(env, -23.5614, -46.6558);
+  assert(e && e.m >= 700 && e.m <= 900 && e.z === 12, `Elevação deve vir da grade z12 do R2 (${e && e.m} m)`);
+  const semR2 = await sinal.elevacaoEm({}, -10.5, -50.5);
+  assert(semR2 === null, 'Sem R2 a elevação deve degradar para null sem lançar erro');
+
+  const dl = await sinal.dadosLocais(env, -23.5614, -46.6558);
+  assert(dl.limiteVelocidade && dl.limiteVelocidade.kmh === 50, 'Dados locais devem retornar limite 50 km/h da via mapeada');
+  assert(dl.radaresProximos.length === 1 && dl.radaresProximos[0].limiteKmh === 50, 'Dados locais devem listar o radar próximo com limite');
+  assert(dl.semaforosRaio400m === 2 && dl.lombadasRaio400m === 1, 'Dados locais devem contar semáforos e lombadas no raio');
+
+  const ped = await sinal.listarPedagiosMapa(env);
+  assert(ped.some((p) => p.fonte === 'tabela_antt' && p.tarifaCarro > 0) && ped.some((p) => p.fonte === 'osm'), 'Pedágios do mapa devem mesclar tabela ANTT (com tarifa) e praças OSM');
+
+  const rota = {
+    valido: true,
+    resumoViagem: { distanciaViariaKm: 0.6 },
+    geometriaRota: { waypoints: [{ lat: -23.5600, lng: -46.6580 }, { lat: -23.5614, lng: -46.6556 }, { lat: -23.5630, lng: -46.6530 }] }
+  };
+  await sinal.enriquecerRotaComSinalizacao(rota, env);
+  assert(rota.sinalizacaoRota && rota.sinalizacaoRota.totalRadares === 1, 'Rota deve detectar o radar sobre o trajeto');
+  assert(rota.sinalizacaoRota.trechosLimiteVelocidade[0].kmh === 50 && rota.sinalizacaoRota.trechosLimiteVelocidade[0].fonte === 'placa_osm', 'Rota deve usar a placa OSM como limite do trecho');
+  assert(rota.perfilAltimetrico && rota.perfilAltimetrico.disponivel && rota.perfilAltimetrico.ganhoElevacaoM > 0, 'Rota deve ter perfil altimétrico com ganho de elevação');
+}
+
 console.log('\n========================================');
 console.log(`RESULTADO FINAL: ${passed} PASSOU | ${failed} FALHOU`);
 console.log('========================================');

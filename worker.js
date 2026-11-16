@@ -23,6 +23,15 @@ import {
   renderizarMapaRotaSvg,
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
+import {
+  lerShardSinal,
+  elevacaoEm,
+  perfilAltimetrico,
+  dadosLocais,
+  listarPedagiosMapa,
+  enriquecerRotaComSinalizacao,
+  SINAL_SHARD_Z
+} from './sinalizacao.js';
 
 let memLojasCache = null;
 
@@ -33,7 +42,7 @@ function gerarTileSinteticoLocal(z, x, y) {
     road.push({ c: [[[0, i], [1000, i + ((seed % 3) - 1) * 20]]], cls: i === 550 ? 'primary' : 'minor', ow: 0 });
     road.push({ c: [[[i, 0], [i + ((seed % 2) ? 15 : -15), 1000]]], cls: i === 350 ? 'secondary' : 'minor', ow: 0 });
   }
-  return { water: [], park: [], building: [], road, poi: [], place: [] };
+  return { water: [], park: [], building: [], road, poi: [], place: [], sintetico: true };
 }
 
 async function lerTileR2(env, z, x, y) {
@@ -280,6 +289,115 @@ export default {
       }
     }
 
+    // ── TOPOGRAFIA: GRADE DE ELEVAÇÃO 128x128 Int16 (R2, imutável → cache longo) ──
+    if (pathname.startsWith('/api/mapas/terreno/') && pathname.endsWith('.bin')) {
+      const parts = pathname.replace('/api/mapas/terreno/', '').replace('.bin', '').split('/').map((n) => parseInt(n, 10));
+      if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n >= 0)) {
+        const [z, x, y] = parts;
+        const binHeaders = {
+          ...CORS_HEADERS,
+          'Content-Type': 'application/octet-stream',
+          'Cache-Control': 'public, max-age=2592000, immutable'
+        };
+        const cache = caches.default;
+        const hit = await cache.match(request);
+        if (hit) return hit;
+        if (env && env.ROTAS_R2) {
+          const obj = await env.ROTAS_R2.get(`terrain/${z}/${x}/${y}.bin`);
+          if (obj) {
+            // Entrega a grade gzip com Content-Encoding: o navegador descomprime nativamente
+            const resp = new Response(obj.body, {
+              status: 200,
+              encodeBody: 'manual',
+              headers: { ...binHeaders, 'Content-Encoding': 'gzip', 'X-Ponte-Terrain': 'R2' }
+            });
+            ctx.waitUntil(cache.put(request, resp.clone()));
+            return resp;
+          }
+        }
+        return new Response(null, { status: 204, headers: { ...binHeaders, 'Cache-Control': 'public, max-age=86400' } });
+      }
+    }
+
+    if (pathname === '/api/mapas/terreno/index.json') {
+      let idx = { tiles: {} };
+      if (env && env.ROTAS_R2) {
+        try {
+          const obj = await env.ROTAS_R2.get('terrain/index.json');
+          if (obj) idx = await obj.json();
+        } catch (_) {}
+      }
+      return new Response(JSON.stringify(idx), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=3600' }
+      });
+    }
+
+    // ── ELEVAÇÃO PONTUAL OU PERFIL ALTIMÉTRICO (?pontos=lat,lng;lat,lng...) ──
+    if (pathname === '/api/mapas/elevacao') {
+      const pontosStr = url.searchParams.get('pontos');
+      if (pontosStr) {
+        const pontos = pontosStr.split(';').slice(0, 200).map((s) => {
+          const [la, ln] = s.split(',').map(Number);
+          return { lat: la, lng: ln };
+        }).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+        if (pontos.length < 2) return jsonResp({ valido: false, erro: 'Informe ao menos 2 pontos lat,lng separados por ;' }, 400);
+        const perfil = await perfilAltimetrico(env, pontos, Math.min(128, pontos.length));
+        return jsonResp({ valido: true, ...perfil });
+      }
+      const lat = parseFloat(url.searchParams.get('lat'));
+      const lng = parseFloat(url.searchParams.get('lng'));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return jsonResp({ valido: false, erro: 'Parâmetros lat e lng obrigatórios' }, 400);
+      }
+      const e = await elevacaoEm(env, lat, lng);
+      return jsonResp({
+        valido: Boolean(e),
+        coordenadas: { lat, lng },
+        altitudeM: e ? e.m : null,
+        resolucaoZoom: e ? e.z : null,
+        fonte: 'SRTM/GMTED (R2 soberano)'
+      }, e ? 200 : 404);
+    }
+
+    // ── SINALIZAÇÃO VIÁRIA POR CÉLULA z12: SEMÁFOROS, RADARES, LOMBADAS E LIMITES DE VELOCIDADE ──
+    if (pathname.startsWith('/api/mapas/sinalizacao/') && pathname.endsWith('.json')) {
+      const parts = pathname.replace('/api/mapas/sinalizacao/', '').replace('.json', '').split('/').map((n) => parseInt(n, 10));
+      if (parts.length === 2 && parts.every((n) => Number.isFinite(n) && n >= 0)) {
+        const cache = caches.default;
+        const hit = await cache.match(request);
+        if (hit) return hit;
+        const data = await lerShardSinal(env, parts[0], parts[1]);
+        const resp = new Response(JSON.stringify(data), {
+          headers: {
+            ...CORS_HEADERS,
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'public, max-age=604800',
+            'X-Ponte-Shard-Zoom': String(SINAL_SHARD_Z)
+          }
+        });
+        ctx.waitUntil(cache.put(request, resp.clone()));
+        return resp;
+      }
+    }
+
+    // ── DADOS LOCAIS DE UM PONTO: LIMITE DA VIA, RADARES, SEMÁFOROS, ALTITUDE E PEDÁGIO MAIS PRÓXIMO ──
+    if (pathname === '/api/mapas/dados-locais') {
+      const lat = parseFloat(url.searchParams.get('lat'));
+      const lng = parseFloat(url.searchParams.get('lng'));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return jsonResp({ valido: false, erro: 'Parâmetros lat e lng obrigatórios' }, 400);
+      }
+      return jsonResp(await dadosLocais(env, lat, lng));
+    }
+
+    // ── PRAÇAS DE PEDÁGIO PARA O MAPA (TABELA ANTT COM TARIFAS + PRAÇAS OSM NACIONAIS) ──
+    if (pathname === '/api/mapas/pedagios') {
+      const lista = await listarPedagiosMapa(env);
+      return new Response(JSON.stringify({ valido: true, total: lista.length, pracas: lista }), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }
+      });
+    }
+
     // ── BUSCA / AUTOCOMPLETE SOBERANO DE RUAS, POIS E CIDADES (R2 INDEX) ──
     if (pathname === '/api/rotas/buscar') {
       const q = (url.searchParams.get('q') || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -494,6 +612,7 @@ export default {
       }
       const res = calcularRotaCompleta(params);
       await enriquecerRotaComAStar(res, env);
+      await enriquecerRotaComSinalizacao(res, env);
       return jsonResp(res, res.valido ? 200 : 400);
     }
 
@@ -516,6 +635,7 @@ export default {
       const res = calcularTrackingViagemAoVivo(params);
       if (res.valido && res.rotaBase) {
         await enriquecerRotaComAStar(res.rotaBase, env);
+        await enriquecerRotaComSinalizacao(res.rotaBase, env);
       }
       return jsonResp(res, res.valido ? 200 : 400);
     }
@@ -654,7 +774,13 @@ export default {
         'GET /api/rotas/geocoding?q=01310-100',
         'GET /api/rotas/geocoding/reverso?lat=-23.5614&lng=-46.6558',
         'POST /api/rotas/viagem/criar',
-        'GET /api/rotas/pedagios'
+        'GET /api/rotas/pedagios',
+        'GET /api/mapas/pedagios',
+        'GET /api/mapas/elevacao?lat=-23.5614&lng=-46.6558',
+        'GET /api/mapas/elevacao?pontos=-23.56,-46.65;-23.60,-46.70',
+        'GET /api/mapas/dados-locais?lat=-23.5614&lng=-46.6558',
+        'GET /api/mapas/sinalizacao/{x}/{y}.json (célula z12)',
+        'GET /api/mapas/terreno/{z}/{x}/{y}.bin (grade Int16 128x128)'
       ]
     }, 404);
   }

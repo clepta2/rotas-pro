@@ -38,6 +38,23 @@ export class PonteMapEngine {
     this.customPin = null;
     this.stores = [];
     this.showStores = Boolean(options.showStores);
+
+    // Topografia (hillshade + curvas de nível) e Sinalização Viária (semáforos, radares, placas, pedágios)
+    this.showTerrain = options.showTerrain !== false;
+    this.showSignals = options.showSignals !== false;
+    this.showSpeed = Boolean(options.showSpeed);
+    this.showTolls = options.showTolls !== false;
+    this.terrainIndex = null;
+    this.terrainIndexLoading = false;
+    this.terrainGrids = new Map();
+    this.terrainBitmaps = new Map();
+    this.terrainPending = new Set();
+    this.signalShards = new Map();
+    this.signalPending = new Set();
+    this.tolls = [];
+    this.tollsLoading = false;
+    this.onTollClick = options.onTollClick || null;
+    this.onRadarClick = options.onRadarClick || null;
     this.onMapClick = options.onMapClick || null;
     this.onStoreClick = options.onStoreClick || null;
     this.onZoomChange = options.onZoomChange || null;
@@ -181,6 +198,155 @@ export class PonteMapEngine {
     this.needsRender = true;
   }
 
+  setTerrain(enabled) {
+    this.showTerrain = Boolean(enabled);
+    this.needsRender = true;
+  }
+
+  setSignals(enabled) {
+    this.showSignals = Boolean(enabled);
+    this.needsRender = true;
+  }
+
+  setSpeedLimits(enabled) {
+    this.showSpeed = Boolean(enabled);
+    this.needsRender = true;
+  }
+
+  setTolls(enabled) {
+    this.showTolls = Boolean(enabled);
+    this.needsRender = true;
+  }
+
+  static tileOf(lat, lng, z) {
+    const n = Math.pow(2, z);
+    const fx = ((lng + 180) / 360) * n;
+    const latRad = (lat * Math.PI) / 180;
+    const fy = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+    return { x: Math.floor(fx), y: Math.floor(fy), fx, fy };
+  }
+
+  // Busca genérica com Cache Storage do navegador (tiles imutáveis: zero rede na 2ª visita)
+  async _cachedFetch(url, kind) {
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open('ponte-maps-tiles-v1');
+        const hit = await cache.match(url);
+        if (hit) return kind === 'bin' ? hit.arrayBuffer() : hit.json();
+        const res = await fetch(url);
+        if (res.status === 200) {
+          await cache.put(url, res.clone());
+          return kind === 'bin' ? res.arrayBuffer() : res.json();
+        }
+        return null;
+      } catch (_) {}
+    }
+    const res = await fetch(url);
+    if (res.status !== 200) return null;
+    return kind === 'bin' ? res.arrayBuffer() : res.json();
+  }
+
+  async _loadTerrainIndex() {
+    if (this.terrainIndex || this.terrainIndexLoading) return;
+    this.terrainIndexLoading = true;
+    try {
+      const res = await fetch(`${this.apiBase}/api/mapas/terreno/index.json`);
+      if (res.ok) {
+        const j = await res.json();
+        const idx = {};
+        for (const [z, arr] of Object.entries(j.tiles || {})) idx[z] = new Set(arr);
+        this.terrainIndex = idx;
+        this.needsRender = true;
+      }
+    } catch (_) {}
+    this.terrainIndexLoading = false;
+  }
+
+  _hasTerrain(z, x, y) {
+    const s = this.terrainIndex && this.terrainIndex[z];
+    return Boolean(s && s.has(`${x}/${y}`));
+  }
+
+  _fetchTerrain(z, x, y) {
+    const key = `${z}/${x}/${y}`;
+    if (this.terrainGrids.has(key) || this.terrainPending.has(key) || this.tileFetchPaused) return;
+    if (this.terrainPending.size >= 3) return;
+    this.terrainPending.add(key);
+    this._cachedFetch(`${this.apiBase}/api/mapas/terreno/${key}.bin`, 'bin')
+      .then((buf) => {
+        const grid = buf && buf.byteLength === 128 * 128 * 2 ? new Int16Array(buf) : null;
+        if (this.terrainGrids.size >= 36) this.terrainGrids.delete(this.terrainGrids.keys().next().value);
+        this.terrainGrids.set(key, grid);
+        this.needsRender = true;
+      })
+      .catch(() => {})
+      .finally(() => this.terrainPending.delete(key));
+  }
+
+  _fetchSignals(x, y) {
+    const key = `${x}/${y}`;
+    if (this.signalShards.has(key) || this.signalPending.has(key) || this.tileFetchPaused) return;
+    if (this.signalPending.size >= 2) return;
+    this.signalPending.add(key);
+    this._cachedFetch(`${this.apiBase}/api/mapas/sinalizacao/${key}.json`, 'json')
+      .then((d) => {
+        if (this.signalShards.size >= 16) this.signalShards.delete(this.signalShards.keys().next().value);
+        this.signalShards.set(key, d || { s: [], r: [], l: [], v: [] });
+        this.needsRender = true;
+      })
+      .catch(() => {})
+      .finally(() => this.signalPending.delete(key));
+  }
+
+  async _loadTolls() {
+    if (this.tollsLoading || this.tolls.length) return;
+    this.tollsLoading = true;
+    try {
+      const res = await fetch(`${this.apiBase}/api/mapas/pedagios`);
+      if (res.ok) {
+        const j = await res.json();
+        this.tolls = j.pracas || [];
+        this.needsRender = true;
+      }
+    } catch (_) {}
+    this.tollsLoading = false;
+  }
+
+  _visibleSignalShards() {
+    const tl = this.screenToLatLng(0, 0);
+    const br = this.screenToLatLng(this.width, this.height);
+    const a = PonteMapEngine.tileOf(tl.lat, tl.lng, 12);
+    const b = PonteMapEngine.tileOf(br.lat, br.lng, 12);
+    const out = [];
+    if ((b.x - a.x + 1) * (b.y - a.y + 1) > 9) return out;
+    for (let x = a.x; x <= b.x; x++) {
+      for (let y = a.y; y <= b.y; y++) {
+        this._fetchSignals(x, y);
+        const d = this.signalShards.get(`${x}/${y}`);
+        if (d) out.push(d);
+      }
+    }
+    return out;
+  }
+
+  _hitTestPoi(sx, sy) {
+    if (this.showTolls && this.zoom >= 6.5) {
+      for (const t of this.tolls) {
+        const p = this.latLngToScreen(t.lat, t.lng);
+        if ((p.x - sx) ** 2 + (p.y - sy) ** 2 < 14 * 14) return { tipo: 'pedagio', item: t };
+      }
+    }
+    if (this.showSignals && this.zoom >= 13) {
+      for (const sh of this.signalShards.values()) {
+        for (const r of sh.r) {
+          const p = this.latLngToScreen(r[0], r[1]);
+          if ((p.x - sx) ** 2 + (p.y - sy) ** 2 < 12 * 12) return { tipo: 'radar', item: { lat: r[0], lng: r[1], limiteKmh: r[2] || null } };
+        }
+      }
+    }
+    return null;
+  }
+
   _hitTestStore(sx, sy) {
     if (!this.showStores || !this.stores.length) return null;
     let best = null;
@@ -304,8 +470,13 @@ export class PonteMapEngine {
           const sx = e.clientX - rect.left;
           const sy = e.clientY - rect.top;
           const hitStore = this._hitTestStore(sx, sy);
+          const hitPoi = hitStore ? null : this._hitTestPoi(sx, sy);
           if (hitStore && this.onStoreClick) {
             this.onStoreClick(hitStore);
+          } else if (hitPoi && hitPoi.tipo === 'pedagio' && this.onTollClick) {
+            this.onTollClick(hitPoi.item);
+          } else if (hitPoi && hitPoi.tipo === 'radar' && this.onRadarClick) {
+            this.onRadarClick(hitPoi.item);
           } else {
             const coords = this.screenToLatLng(sx, sy);
             if (this.onMapClick) this.onMapClick(coords);
@@ -487,9 +658,27 @@ export class PonteMapEngine {
       if (this.brasilGeo) this._renderBrasilGeo(ctx, pal);
     }
 
+    // 2.5 Topografia: Hillshade + Tinta Hipsométrica + Curvas de Nível (R2 soberano)
+    if (this.showTerrain) {
+      this._renderTerrain(ctx, pal);
+    }
+
     // 3. Tiles Vetoriais Reais (Zoom >= 10, usando tileZoom entre 10 e 14 escalado suavemente)
     if (this.zoom >= 9.5) {
       this._renderVectorTiles(ctx, pal);
+    }
+
+    // 3.5 Limites de Velocidade (vias coloridas por km/h + placas R-19) e Sinalização (semáforos, radares, lombadas)
+    if ((this.showSpeed || this.showSignals) && this.zoom >= 12.5) {
+      const shards = this._visibleSignalShards();
+      if (this.showSpeed) this._renderSpeedLimits(ctx, pal, shards);
+      if (this.showSignals) this._renderSignals(ctx, pal, shards);
+    }
+
+    // 3.8 Praças de Pedágio Nacionais (ANTT + OSM) sempre visíveis
+    if (this.showTolls && this.zoom >= 6.5) {
+      if (!this.tolls.length) this._loadTolls();
+      this._renderTolls(ctx, pal);
     }
 
     // 4. Rótulos das Principais Cidades Brasileiras em Zoom Nacional/Regional (< 11.5)
@@ -528,7 +717,485 @@ export class PonteMapEngine {
     // 7. Escala Gráfica Dinâmica (km / m)
     this._renderScaleBar(ctx, pal);
 
+    // 8. Perfil Altimétrico da Rota Ativa
+    if (this.routeData && this.routeData.valido && this.routeData.perfilAltimetrico && this.routeData.perfilAltimetrico.disponivel) {
+      this._renderElevationProfile(ctx, pal);
+    }
+
     ctx.restore();
+  }
+
+  // ════════ TOPOGRAFIA ════════
+  _terrainZoomFor(zoom) {
+    if (zoom >= 11.5) return 12;
+    if (zoom >= 8.5) return 10;
+    return 7;
+  }
+
+  _getTerrainBitmap(key, z, grid) {
+    const bmpKey = `${key}_${this.theme}_${z >= 12 && this.zoom >= 12.5 ? 'c' : 'n'}`;
+    if (this.terrainBitmaps.has(bmpKey)) return this.terrainBitmaps.get(bmpKey);
+
+    const G = 128;
+    const S = 256;
+    const dark = this.theme === 'dark';
+    const [, , ty] = key.split('/').map(Number);
+    const n = Math.PI - (2 * Math.PI * (ty + 0.5)) / Math.pow(2, z);
+    const latC = Math.atan(Math.sinh(n));
+    const cellM = (40075016 * Math.cos(latC)) / Math.pow(2, z) / G;
+    const exag = z >= 12 ? 1.6 : z >= 10 ? 2.6 : 5;
+
+    const at = (gx, gy) => {
+      const x = Math.max(0, Math.min(G - 1, gx));
+      const y = Math.max(0, Math.min(G - 1, gy));
+      return grid[y * G + x];
+    };
+    const sample = (fx, fy) => {
+      const x0 = Math.floor(fx); const y0 = Math.floor(fy);
+      const tx = fx - x0; const tyy = fy - y0;
+      const a = at(x0, y0); const b = at(x0 + 1, y0); const c = at(x0, y0 + 1); const d = at(x0 + 1, y0 + 1);
+      return (a * (1 - tx) + b * tx) * (1 - tyy) + (c * (1 - tx) + d * tx) * tyy;
+    };
+
+    // Azimute 315° (NO), altitude 45° — iluminação cartográfica padrão
+    const az = (315 * Math.PI) / 180;
+    const alt = (45 * Math.PI) / 180;
+    const sinAlt = Math.sin(alt); const cosAlt = Math.cos(alt);
+    const contours = z >= 12 && this.zoom >= 12.5;
+    const interval = 20;
+
+    const H = new Float32Array(S * S);
+    for (let py = 0; py < S; py++) {
+      for (let px = 0; px < S; px++) H[py * S + px] = sample((px + 0.5) / 2 - 0.5, (py + 0.5) / 2 - 0.5);
+    }
+
+    const off = document.createElement('canvas');
+    off.width = S;
+    off.height = S;
+    const octx = off.getContext('2d');
+    const img = octx.createImageData(S, S);
+    const px4 = img.data;
+    const step = cellM / 2;
+
+    for (let py = 0; py < S; py++) {
+      for (let px = 0; px < S; px++) {
+        const i = py * S + px;
+        const h = H[i];
+        const hl = H[py * S + Math.max(0, px - 1)];
+        const hr = H[py * S + Math.min(S - 1, px + 1)];
+        const hu = H[Math.max(0, py - 1) * S + px];
+        const hd = H[Math.min(S - 1, py + 1) * S + px];
+        const dzdx = ((hr - hl) / (2 * step)) * exag;
+        const dzdy = ((hd - hu) / (2 * step)) * exag;
+        const slope = Math.atan(Math.hypot(dzdx, dzdy));
+        const aspect = Math.atan2(dzdy, -dzdx);
+        let shade = sinAlt * Math.cos(slope) + cosAlt * Math.sin(slope) * Math.cos(az - Math.PI / 2 - aspect);
+        shade = Math.max(0, Math.min(1, shade));
+
+        let r = 0; let g = 0; let b = 0; let a = 0;
+        if (h > 0) {
+          const dlt = shade - sinAlt;
+          if (dlt < 0) {
+            a = Math.min(dark ? 150 : 110, -dlt * (dark ? 420 : 300));
+          } else {
+            r = 255; g = 255; b = 255;
+            a = Math.min(dark ? 38 : 70, dlt * (dark ? 120 : 200));
+          }
+          // Tinta hipsométrica sutil em zoom regional (planícies verdes → planaltos ocre)
+          if (this.zoom < 11 && a < 40) {
+            const t = Math.min(1, h / 1400);
+            if (dark) { r = 40 + 60 * t; g = 70 + 20 * t; b = 50; }
+            else { r = 150 + 80 * t; g = 190 - 30 * t; b = 120 - 30 * t; }
+            a = Math.max(a, 26);
+          }
+        }
+
+        if (contours && h > 0) {
+          const band = Math.floor(h / interval);
+          const bR = Math.floor(hr / interval);
+          const bD = Math.floor(hd / interval);
+          if (band !== bR || band !== bD) {
+            const index = band % 5 === 0 || bR % 5 === 0;
+            if (dark) { r = 180; g = 140; b = 90; } else { r = 150; g = 100; b = 50; }
+            a = index ? 120 : 60;
+          }
+        }
+
+        const o = i * 4;
+        px4[o] = r; px4[o + 1] = g; px4[o + 2] = b; px4[o + 3] = a;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+
+    if (this.terrainBitmaps.size >= 40) this.terrainBitmaps.delete(this.terrainBitmaps.keys().next().value);
+    this.terrainBitmaps.set(bmpKey, off);
+    return off;
+  }
+
+  _renderTerrain(ctx) {
+    if (!this.terrainIndex) {
+      this._loadTerrainIndex();
+      return;
+    }
+    let tz = this._terrainZoomFor(this.zoom);
+    const center = PonteMapEngine.tileOf(this.lat, this.lng, tz);
+    while (tz > 7 && !this._hasTerrain(tz, center.x, center.y)) {
+      tz = tz === 12 ? 10 : 7;
+      const c2 = PonteMapEngine.tileOf(this.lat, this.lng, tz);
+      center.x = c2.x; center.y = c2.y;
+    }
+
+    const scaleFactor = 256 * Math.pow(2, this.zoom - tz);
+    const cp = PonteMapEngine.project(this.lat, this.lng, this.zoom);
+    const tlx = cp.x - this.width / 2;
+    const tly = cp.y - this.height / 2;
+    const minTx = Math.floor(tlx / scaleFactor);
+    const maxTx = Math.floor((tlx + this.width) / scaleFactor);
+    const minTy = Math.floor(tly / scaleFactor);
+    const maxTy = Math.floor((tly + this.height) / scaleFactor);
+    if ((maxTx - minTx + 1) * (maxTy - minTy + 1) > 30) return;
+
+    let builtThisFrame = 0;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      for (let ty = minTy; ty <= maxTy; ty++) {
+        if (!this._hasTerrain(tz, tx, ty)) continue;
+        const key = `${tz}/${tx}/${ty}`;
+        const grid = this.terrainGrids.get(key);
+        if (grid === undefined) { this._fetchTerrain(tz, tx, ty); continue; }
+        if (!grid) continue;
+        const bmpKey = `${key}_${this.theme}_${tz >= 12 && this.zoom >= 12.5 ? 'c' : 'n'}`;
+        if (!this.terrainBitmaps.has(bmpKey)) {
+          if (builtThisFrame >= 1 || this.isDragging) { setTimeout(() => { this.needsRender = true; }, 30); continue; }
+          builtThisFrame++;
+        }
+        const bmp = this._getTerrainBitmap(key, tz, grid);
+        ctx.drawImage(bmp, tx * scaleFactor - tlx, ty * scaleFactor - tly, scaleFactor + 0.5, scaleFactor + 0.5);
+      }
+    }
+    ctx.restore();
+  }
+
+  // ════════ LIMITES DE VELOCIDADE ════════
+  static speedColor(kmh) {
+    if (kmh <= 30) return '#22c55e';
+    if (kmh <= 40) return '#84cc16';
+    if (kmh <= 50) return '#eab308';
+    if (kmh <= 60) return '#f97316';
+    if (kmh <= 80) return '#ef4444';
+    return '#a855f7';
+  }
+
+  _drawSpeedSign(ctx, x, y, kmh, r = 11) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = Math.max(2.4, r * 0.24);
+    ctx.strokeStyle = '#dc2626';
+    ctx.stroke();
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `900 ${kmh >= 100 ? r * 0.78 : r * 0.95}px -apple-system, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(kmh), x, y + 0.5);
+  }
+
+  _renderSpeedLimits(ctx, pal, shards) {
+    const groups = new Map();
+    const signs = [];
+    for (const sh of shards) {
+      for (const w of sh.v) {
+        const kmh = w[0];
+        const f = w[3];
+        let arr = groups.get(kmh);
+        if (!arr) { arr = []; groups.set(kmh, arr); }
+        const pts = [];
+        let onScreen = false;
+        for (let i = 0; i + 1 < f.length; i += 2) {
+          const p = this.latLngToScreen(f[i], f[i + 1]);
+          if (p.x > -50 && p.x < this.width + 50 && p.y > -50 && p.y < this.height + 50) onScreen = true;
+          pts.push(p);
+        }
+        if (!onScreen) continue;
+        arr.push(pts);
+        if (this.zoom >= 14.5) signs.push({ p: pts[Math.floor(pts.length / 2)], kmh, cls: w[1] });
+      }
+    }
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const lw = Math.max(2, Math.min(5, (this.zoom - 11) * 0.9));
+    for (const [kmh, lines] of groups) {
+      ctx.beginPath();
+      for (const pts of lines) {
+        pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      }
+      ctx.strokeStyle = PonteMapEngine.speedColor(kmh);
+      ctx.globalAlpha = 0.72;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    if (!this.isDragging && !this.flyAnim) {
+      signs.sort((a, b) => a.cls - b.cls);
+      const placed = [];
+      for (const s of signs) {
+        if (s.p.x < 14 || s.p.y < 14 || s.p.x > this.width - 14 || s.p.y > this.height - 14) continue;
+        if (placed.some((q) => Math.abs(q.x - s.p.x) < 44 && Math.abs(q.y - s.p.y) < 44)) continue;
+        placed.push(s.p);
+        this._drawSpeedSign(ctx, s.p.x, s.p.y, s.kmh, 10.5);
+        if (placed.length > 40) break;
+      }
+    }
+
+    // Legenda compacta
+    const legend = [30, 40, 50, 60, 80, 100];
+    const lx = this.width - 14 - legend.length * 30;
+    const ly = this.height - 92;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    ctx.beginPath();
+    ctx.roundRect(lx - 8, ly - 10, legend.length * 30 + 10, 22, 6);
+    ctx.fill();
+    ctx.font = '800 9px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    legend.forEach((k, i) => {
+      ctx.fillStyle = PonteMapEngine.speedColor(k);
+      ctx.fillRect(lx + i * 30, ly - 2, 8, 4);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(String(k), lx + i * 30 + 10, ly + 0.5);
+    });
+    ctx.restore();
+  }
+
+  // ════════ SEMÁFOROS, RADARES E LOMBADAS ════════
+  _drawTrafficLight(ctx, x, y, s = 1) {
+    ctx.beginPath();
+    ctx.roundRect(x - 3.6 * s, y - 8 * s, 7.2 * s, 16 * s, 2.4 * s);
+    ctx.fillStyle = '#0f172a';
+    ctx.fill();
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    const cols = ['#ef4444', '#facc15', '#22c55e'];
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(x, y - 4.8 * s + i * 4.8 * s, 1.75 * s, 0, Math.PI * 2);
+      ctx.fillStyle = cols[i];
+      ctx.fill();
+    }
+  }
+
+  _drawRadar(ctx, x, y, kmh, highlight = false) {
+    if (highlight) {
+      ctx.beginPath();
+      ctx.arc(x, y, 17, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#dc2626';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    // Corpo da câmera + lente
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.roundRect(x - 5.5, y - 3.5, 8.5, 7, 1.5);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + 3, y - 1.5);
+    ctx.lineTo(x + 6, y - 3.2);
+    ctx.lineTo(x + 6, y + 3.2);
+    ctx.lineTo(x + 3, y + 1.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x - 1.2, y, 1.7, 0, Math.PI * 2);
+    ctx.fillStyle = '#dc2626';
+    ctx.fill();
+    if (kmh) this._drawSpeedSign(ctx, x + 13, y - 11, kmh, 8.5);
+  }
+
+  _renderSignals(ctx, pal, shards) {
+    const inView = (p, m = 12) => p.x > -m && p.x < this.width + m && p.y > -m && p.y < this.height + m;
+    ctx.save();
+
+    if (this.zoom >= 15.5) {
+      for (const sh of shards) {
+        for (const l of sh.l) {
+          const p = this.latLngToScreen(l[0], l[1]);
+          if (!inView(p)) continue;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y - 7);
+          ctx.lineTo(p.x + 7, p.y + 5);
+          ctx.lineTo(p.x - 7, p.y + 5);
+          ctx.closePath();
+          ctx.fillStyle = '#facc15';
+          ctx.fill();
+          ctx.lineWidth = 1.4;
+          ctx.strokeStyle = '#0f172a';
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(p.x, p.y + 3.2, 3, Math.PI, 0);
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+      }
+    }
+
+    if (this.zoom >= 14.2) {
+      const s = this.zoom >= 16 ? 1.15 : 0.9;
+      const placed = [];
+      for (const sh of shards) {
+        for (const t of sh.s) {
+          const p = this.latLngToScreen(t[0], t[1]);
+          if (!inView(p)) continue;
+          if (this.zoom < 16 && placed.some((q) => Math.abs(q.x - p.x) < 9 && Math.abs(q.y - p.y) < 14)) continue;
+          placed.push(p);
+          this._drawTrafficLight(ctx, p.x, p.y, s);
+        }
+      }
+    } else if (this.zoom >= 12.8) {
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';
+      for (const sh of shards) {
+        for (const t of sh.s) {
+          const p = this.latLngToScreen(t[0], t[1]);
+          if (!inView(p)) continue;
+          ctx.fillRect(p.x - 1.3, p.y - 1.3, 2.6, 2.6);
+        }
+      }
+    }
+
+    if (this.zoom >= 12.8) {
+      for (const sh of shards) {
+        for (const r of sh.r) {
+          const p = this.latLngToScreen(r[0], r[1]);
+          if (!inView(p, 20)) continue;
+          this._drawRadar(ctx, p.x, p.y, this.zoom >= 14 ? r[2] : 0);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // ════════ PEDÁGIOS NACIONAIS ════════
+  _renderTolls(ctx, pal) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const placed = [];
+    const big = this.zoom >= 9;
+    for (const t of this.tolls) {
+      const p = this.latLngToScreen(t.lat, t.lng);
+      if (p.x < -20 || p.y < -20 || p.x > this.width + 20 || p.y > this.height + 20) continue;
+      if (!big && placed.some((q) => Math.abs(q.x - p.x) < 10 && Math.abs(q.y - p.y) < 10)) continue;
+      placed.push(p);
+      const r = big ? 9 : 5.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = t.fonte === 'tabela_antt' ? '#f59e0b' : '#fbbf24';
+      ctx.fill();
+      ctx.lineWidth = big ? 2 : 1.4;
+      ctx.strokeStyle = '#0f172a';
+      ctx.stroke();
+      if (big) {
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '900 10px sans-serif';
+        ctx.fillText('$', p.x, p.y + 0.5);
+        if (this.zoom >= 10.5 && t.tarifaCarro) {
+          const label = 'R$ ' + t.tarifaCarro.toFixed(2).replace('.', ',');
+          ctx.font = '800 10px -apple-system, "Segoe UI", sans-serif';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = pal.roadTextHalo;
+          ctx.strokeText(label, p.x, p.y - 16);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillText(label, p.x, p.y - 16);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // ════════ PERFIL ALTIMÉTRICO DA ROTA ════════
+  _renderElevationProfile(ctx) {
+    const perf = this.routeData.perfilAltimetrico;
+    const pts = perf.amostras.filter((a) => a.m !== null);
+    if (pts.length < 2) return;
+    const w = Math.min(260, this.width * 0.42);
+    const h = 74;
+    const x0 = this.width - w - 56;
+    const y0 = this.height - h - 14;
+    const minM = perf.altitudeMinM;
+    const maxM = Math.max(perf.altitudeMaxM, minM + 10);
+    const maxKm = pts[pts.length - 1].km || 1;
+    const px = (km) => x0 + 8 + (km / maxKm) * (w - 16);
+    const py = (m) => y0 + h - 10 - ((m - minM) / (maxM - minM)) * (h - 30);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.beginPath();
+    ctx.roundRect(x0, y0, w, h, 8);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const grad = ctx.createLinearGradient(0, y0 + 16, 0, y0 + h);
+    grad.addColorStop(0, 'rgba(163, 230, 53, 0.55)');
+    grad.addColorStop(1, 'rgba(163, 230, 53, 0.04)');
+    ctx.beginPath();
+    ctx.moveTo(px(pts[0].km), y0 + h - 8);
+    for (const p of pts) ctx.lineTo(px(p.km), py(p.m));
+    ctx.lineTo(px(pts[pts.length - 1].km), y0 + h - 8);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(px(p.km), py(p.m)) : ctx.lineTo(px(p.km), py(p.m))));
+    ctx.strokeStyle = '#a3e635';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // Posição atual do veículo no perfil
+    const vKm = (this.vehicleProgress / 100) * maxKm;
+    let vM = pts[0].m;
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i].km >= vKm) {
+        const t = (vKm - pts[i - 1].km) / Math.max(0.0001, pts[i].km - pts[i - 1].km);
+        vM = pts[i - 1].m + (pts[i].m - pts[i - 1].m) * t;
+        break;
+      }
+    }
+    ctx.beginPath();
+    ctx.arc(px(vKm), py(vM), 3.6, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = '800 9.5px -apple-system, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`ALTIMETRIA  ${minM}–${perf.altitudeMaxM} m`, x0 + 8, y0 + 5);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#a3e635';
+    ctx.fillText(`▲${perf.ganhoElevacaoM} m  ▼${perf.perdaElevacaoM} m`, x0 + w - 8, y0 + 5);
+    ctx.restore();
+  }
+
+  _currentSpeedLimit() {
+    const sr = this.routeData && this.routeData.sinalizacaoRota;
+    const wps = this.routeData && this.routeData.geometriaRota && this.routeData.geometriaRota.waypoints;
+    if (!sr || !wps || !sr.trechosLimiteVelocidade || !sr.trechosLimiteVelocidade.length) return null;
+    const idx = Math.floor((this.vehicleProgress / 100) * (wps.length - 1));
+    return sr.trechosLimiteVelocidade.find((t) => idx >= t.deIndice && idx <= t.ateIndice) || null;
   }
 
   _renderStores(ctx, pal) {
@@ -934,7 +1601,10 @@ export class PonteMapEngine {
         const key = `${tz}/${tx}/${ty}`;
         this._fetchTile(tz, tx, ty);
         const tile = this.tileCache.get(key);
-        if (tile) {
+        // Tiles sintéticos (fora das áreas semeadas) não são desenhados: o relevo + Natural Earth ficam visíveis
+        const synthetic = tile && (tile.sintetico || (!(tile.building || []).length && !(tile.poi || []).length && !(tile.water || []).length
+          && (tile.road || []).length === 8 && tile.road.every((r) => r.c[0] && r.c[0].length === 2)));
+        if (tile && !synthetic) {
           const sx = tx * scaleFactor - tlWorldX;
           const sy = ty * scaleFactor - tlWorldY;
           const bmpKey = `${key}_${this.theme}_${this.show3D ? 1 : 0}_${this.showTraffic ? 1 : 0}`;
@@ -1101,6 +1771,23 @@ export class PonteMapEngine {
       ctx.fillText('$', pp.x, pp.y + 0.5);
     }
 
+    // 3.5 Radares fiscalizando a rota (destacados) e semáforos no trajeto
+    const sr = r.sinalizacaoRota;
+    if (sr) {
+      if (this.zoom >= 13.5 && Array.isArray(sr.semaforos)) {
+        for (const s of sr.semaforos) {
+          const sp = this.latLngToScreen(s[0], s[1]);
+          if (sp.x < -10 || sp.y < -10 || sp.x > this.width + 10 || sp.y > this.height + 10) continue;
+          this._drawTrafficLight(ctx, sp.x, sp.y, 0.85);
+        }
+      }
+      for (const rd of sr.radares || []) {
+        const rp = this.latLngToScreen(rd.lat, rd.lng);
+        if (rp.x < -20 || rp.y < -20 || rp.x > this.width + 20 || rp.y > this.height + 20) continue;
+        this._drawRadar(ctx, rp.x, rp.y, rd.limiteKmh, true);
+      }
+    }
+
     // 4. Marcadores Origem (A) e Destino (B)
     const drawPin = (pt, label, bgColor, textColor) => {
       ctx.beginPath();
@@ -1149,6 +1836,12 @@ export class PonteMapEngine {
     ctx.fillStyle = '#a3e635';
     ctx.fill();
     ctx.restore();
+
+    // 6. Placa de limite da via atual acompanhando o veículo
+    if (this.vehicleProgress > 0 && this.vehicleProgress < 100) {
+      const lim = this._currentSpeedLimit();
+      if (lim) this._drawSpeedSign(ctx, vx + 24, vy - 24, lim.kmh, 12);
+    }
 
     ctx.restore();
   }

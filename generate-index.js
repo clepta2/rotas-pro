@@ -605,6 +605,18 @@ ${ponteIconsCode}
                       <button class="map-layer-pill is-active" id="btn-layer-traffic" title="Camada de Trânsito Ao Vivo">
                         <i data-lucide="activity" style="width:13px;height:13px;"></i> <span>Trânsito</span>
                       </button>
+                      <button class="map-layer-pill is-active" id="btn-layer-terrain" title="Relevo: sombreamento topográfico e curvas de nível (SRTM)">
+                        <i data-lucide="mountain" style="width:13px;height:13px;"></i> <span>Relevo</span>
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-layer-signals" title="Semáforos, radares e lombadas">
+                        <i data-lucide="traffic-cone" style="width:13px;height:13px;"></i> <span>Sinalização</span>
+                      </button>
+                      <button class="map-layer-pill" id="btn-layer-speed" title="Limites de velocidade das vias (placas R-19)">
+                        <i data-lucide="gauge" style="width:13px;height:13px;"></i> <span>Velocidade</span>
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-layer-tolls" title="Praças de pedágio do Brasil">
+                        <i data-lucide="circle-dollar-sign" style="width:13px;height:13px;"></i> <span>Pedágios</span>
+                      </button>
                       <button class="map-layer-pill" id="btn-layer-fullscreen" title="Expandir Mapa em Tela Cheia">
                         <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
                       </button>
@@ -628,6 +640,13 @@ ${ponteIconsCode}
                     </div>
                     <div id="hud-gps-eta" style="font-size:14px;font-weight:900;color:#ffffff;">Faltam 6 min • 2.8 km</div>
                     <div id="hud-gps-street" style="font-size:10.5px;color:#cbd5e1;margin-top:2px;">Em rota pela via principal</div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                      <span id="hud-gps-limit" title="Limite de velocidade da via" style="width:30px;height:30px;border-radius:50%;background:#fff;border:3.5px solid #dc2626;color:#0f172a;font-weight:900;font-size:11.5px;display:grid;place-items:center;flex:none;">--</span>
+                      <div style="font-size:10.5px;line-height:1.35;">
+                        <div id="hud-gps-radar" style="color:#fca5a5;font-weight:700;">Sem radar à frente</div>
+                        <div id="hud-gps-extra" style="color:#94a3b8;">Semáforos: -- • Altitude: -- m</div>
+                      </div>
+                    </div>
                   </div>
 
                   <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
@@ -876,7 +895,7 @@ ${ponteIconsCode}
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=3.0.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=3.1.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
@@ -911,6 +930,41 @@ ${ponteIconsCode}
             document.getElementById('popup-place-addr').textContent = d.enderecoFormatado;
           }
         } catch (_) {}
+        try {
+          const r2 = await fetch(API_BASE + '/api/mapas/dados-locais?lat=' + coords.lat + '&lng=' + coords.lng);
+          const dl = await r2.json();
+          if (dl.valido) {
+            const partes = [];
+            if (dl.altitudeM !== null) partes.push('Altitude ' + dl.altitudeM + ' m');
+            if (dl.limiteVelocidade) partes.push('Limite ' + dl.limiteVelocidade.kmh + ' km/h' + (dl.limiteVelocidade.via ? ' (' + dl.limiteVelocidade.via + ')' : ''));
+            if (dl.radaresProximos.length) partes.push(dl.radaresProximos.length + ' radar(es) em 1 km — mais próximo a ' + dl.radaresProximos[0].distanciaM + ' m');
+            if (dl.semaforosRaio400m) partes.push(dl.semaforosRaio400m + ' semáforo(s) em 400 m');
+            if (dl.lombadasRaio400m) partes.push(dl.lombadasRaio400m + ' lombada(s) em 400 m');
+            if (dl.pedagioMaisProximo) partes.push('Pedágio mais próximo: ' + dl.pedagioMaisProximo.nome + ' (' + dl.pedagioMaisProximo.distanciaKm + ' km)');
+            const addrEl = document.getElementById('popup-place-addr');
+            addrEl.textContent = [addrEl.textContent].concat(partes).filter(Boolean).join(' • ');
+          }
+        } catch (_) {}
+      },
+      onTollClick: (t) => {
+        mapEngine.setCustomPin({ lat: t.lat, lng: t.lng });
+        lastClickedCoords = { lat: t.lat, lng: t.lng };
+        document.getElementById('btn-popup-cnpj').style.display = 'none';
+        document.getElementById('map-place-popup').style.display = 'block';
+        document.getElementById('popup-place-title').textContent = 'Pedágio • ' + t.nome;
+        const fmt = (v) => (v === null || v === undefined) ? null : 'R$ ' + Number(v).toFixed(2).replace('.', ',');
+        const tarifas = [fmt(t.tarifaCarro) ? 'Carro ' + fmt(t.tarifaCarro) : '', fmt(t.tarifaMoto) ? 'Moto ' + fmt(t.tarifaMoto) : '', fmt(t.tarifaEixoCaminhao) ? 'Caminhão/eixo ' + fmt(t.tarifaEixoCaminhao) : ''].filter(Boolean).join(' • ');
+        document.getElementById('popup-place-addr').textContent = [t.rodovia, t.operador, t.uf, tarifas || 'Tarifa não tabelada (praça mapeada pela comunidade OSM)'].filter(Boolean).join(' • ');
+        document.getElementById('popup-place-coords').textContent = t.lat.toFixed(5) + ', ' + t.lng.toFixed(5);
+      },
+      onRadarClick: (rd) => {
+        mapEngine.setCustomPin({ lat: rd.lat, lng: rd.lng });
+        lastClickedCoords = { lat: rd.lat, lng: rd.lng };
+        document.getElementById('btn-popup-cnpj').style.display = 'none';
+        document.getElementById('map-place-popup').style.display = 'block';
+        document.getElementById('popup-place-title').textContent = 'Radar / Fiscalização Eletrônica';
+        document.getElementById('popup-place-addr').textContent = rd.limiteKmh ? ('Velocidade máxima fiscalizada: ' + rd.limiteKmh + ' km/h') : 'Limite não informado — respeite a sinalização da via';
+        document.getElementById('popup-place-coords').textContent = rd.lat.toFixed(5) + ', ' + rd.lng.toFixed(5);
       },
       onStoreClick: (store) => {
         mapEngine.setCustomPin({ lat: store.lat, lng: store.lng });
@@ -1075,6 +1129,17 @@ ${ponteIconsCode}
       const btn = e.currentTarget;
       btn.classList.toggle('is-active');
       mapEngine.setTraffic(btn.classList.contains('is-active'));
+    });
+
+    [['btn-layer-terrain', 'setTerrain'], ['btn-layer-signals', 'setSignals'], ['btn-layer-speed', 'setSpeedLimits'], ['btn-layer-tolls', 'setTolls']].forEach(([id, fn]) => {
+      document.getElementById(id)?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.toggle('is-active');
+        mapEngine[fn](btn.classList.contains('is-active'));
+        if (fn === 'setSpeedLimits' && btn.classList.contains('is-active') && mapEngine.zoom < 14) {
+          mapEngine.flyTo(mapEngine.lat, mapEngine.lng, 15, 500);
+        }
+      });
     });
 
     document.getElementById('btn-layer-fullscreen')?.addEventListener('click', (e) => {
@@ -1360,6 +1425,25 @@ ${ponteIconsCode}
           const viaIdx = Math.min(vias.length - 1, Math.floor((pct / 100) * vias.length));
           document.getElementById('hud-gps-street').textContent = 'Via atual: ' + vias[viaIdx];
         }
+        const sr = r.sinalizacaoRota;
+        const lim = mapEngine._currentSpeedLimit();
+        document.getElementById('hud-gps-limit').textContent = lim ? String(lim.kmh) : '--';
+        if (lim && lim.via) document.getElementById('hud-gps-street').textContent = 'Via atual: ' + lim.via;
+        const totKmRota = (sr && sr.extensaoAnalisadaKm) || totKm;
+        const kmAtual = (pct / 100) * totKmRota;
+        const prox = sr ? (sr.radares || []).find((rd) => rd.kmNaRota >= kmAtual) : null;
+        document.getElementById('hud-gps-radar').textContent = prox
+          ? ('Radar em ' + Math.max(10, Math.round((prox.kmNaRota - kmAtual) * 1000)) + ' m' + (prox.limiteKmh ? ' • ' + prox.limiteKmh + ' km/h' : ''))
+          : 'Sem radar à frente';
+        const perf = r.perfilAltimetrico;
+        let alt = '--';
+        if (perf && perf.disponivel) {
+          const am = perf.amostras.filter((a) => a.m !== null);
+          const kmP = (pct / 100) * (am[am.length - 1].km || 0);
+          const near = am.reduce((b, a) => Math.abs(a.km - kmP) < Math.abs(b.km - kmP) ? a : b, am[0]);
+          alt = near.m;
+        }
+        document.getElementById('hud-gps-extra').textContent = 'Semáforos na rota: ' + (sr ? sr.totalSemaforos : '--') + ' • Altitude: ' + alt + ' m';
       };
 
       const stepAnim = (now) => {
