@@ -319,6 +319,18 @@ export async function enriquecerRotaComSinalizacao(rota, env) {
       }
     }
 
+    // Absorve fragmentos < 80 m com o mesmo limite (cruzamentos/passagens paralelas)
+    for (let i = trechos.length - 1; i > 0; i--) {
+      const t = trechos[i];
+      const prev = trechos[i - 1];
+      if (prev.kmh === t.kmh && (t.ateKm - t.deKm < 0.08 || prev.ateKm - prev.deKm < 0.08)) {
+        if (t.ateKm - t.deKm > prev.ateKm - prev.deKm) prev.via = t.via;
+        prev.ateIndice = t.ateIndice;
+        prev.ateKm = t.ateKm;
+        trechos.splice(i, 1);
+      }
+    }
+
     const totalKm = cum[cum.length - 1] || 1;
     const fatorTempo = trechos.reduce((acc, t) => acc + ((t.ateKm - t.deKm) / Math.max(10, t.kmh)), 0);
 

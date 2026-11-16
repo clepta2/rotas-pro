@@ -132,6 +132,31 @@ ${ponteIconsCode}
       color: #a3e635;
       background: rgba(20, 35, 25, 0.95);
     }
+    @media (max-width: 768px) {
+      .map-search-overlay {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .map-search-box {
+        width: 100%;
+      }
+      .map-layers-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .map-layers-bar::-webkit-scrollbar {
+        display: none;
+      }
+      .map-layer-pill {
+        flex: none;
+        height: 30px;
+      }
+    }
     .map-zoom-controls {
       position: absolute;
       bottom: 20px;

@@ -954,8 +954,9 @@ export class PonteMapEngine {
 
     // Legenda compacta
     const legend = [30, 40, 50, 60, 80, 100];
-    const lx = this.width - 14 - legend.length * 30;
-    const ly = this.height - 92;
+    const hasProfile = this.routeData && this.routeData.perfilAltimetrico && this.routeData.perfilAltimetrico.disponivel;
+    const lx = this.width - 56 - legend.length * 30;
+    const ly = this.height - (hasProfile ? 110 : 92);
     ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
     ctx.beginPath();
     ctx.roundRect(lx - 8, ly - 10, legend.length * 30 + 10, 22, 6);
