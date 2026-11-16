@@ -502,7 +502,7 @@ export class PonteMapEngine {
       this._renderRoute(ctx, pal);
     }
 
-    // 5.5 Camada de Lojas & Comércios Ativos
+    // 5.5 Camada de Lojas & Comércios Ativos (Com Clusterização Inteligente & Ícones por Categoria)
     if (this.showStores && this.stores.length > 0) {
       this._renderStores(ctx, pal);
     }
@@ -538,32 +538,84 @@ export class PonteMapEngine {
       saude: '#ef4444',
       servicos: '#06b6d4'
     };
-    const placedLabels = [];
-    ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
+    const catGlyph = {
+      alimentacao: 'R',
+      varejo: 'L',
+      saude: '+',
+      servicos: 'S'
+    };
+
+    const clusters = [];
+    const clusterRadiusSq = this.zoom >= 15.2 ? 18 * 18 : 28 * 28;
 
     for (const st of this.stores) {
       const p = this.latLngToScreen(st.lat, st.lng);
       if (p.x < -20 || p.x > this.width + 20 || p.y < -20 || p.y > this.height + 20) continue;
-      const col = catColors[st.categoria] || '#10b981';
 
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = col;
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#ffffff';
-      ctx.stroke();
+      let joined = false;
+      for (const cl of clusters) {
+        if ((cl.x - p.x) ** 2 + (cl.y - p.y) ** 2 < clusterRadiusSq) {
+          cl.count++;
+          cl.items.push(st);
+          joined = true;
+          break;
+        }
+      }
+      if (!joined) {
+        clusters.push({ x: p.x, y: p.y, count: 1, lead: st, items: [st] });
+      }
+    }
 
-      if (this.zoom >= 13.4 && !this.isDragging) {
-        const clash = placedLabels.some((b) => Math.abs(b.x - p.x) < 95 && Math.abs(b.y - p.y) < 22);
-        if (!clash) {
-          placedLabels.push(p);
-          ctx.lineWidth = 3;
-          ctx.strokeStyle = pal.roadTextHalo;
-          ctx.strokeText(st.nome.slice(0, 22), p.x, p.y - 11);
-          ctx.fillStyle = pal.poiText;
-          ctx.fillText(st.nome.slice(0, 22), p.x, p.y - 11);
+    const placedLabels = [];
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const cl of clusters) {
+      const st = cl.lead;
+      const col = cl.count > 1 ? '#3b82f6' : (catColors[st.categoria] || '#10b981');
+
+      if (cl.count > 1) {
+        // Cluster Numérico Limpo (Estilo Google Maps / Airbnb)
+        ctx.beginPath();
+        ctx.arc(cl.x, cl.y, 12, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.25)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cl.x, cl.y, 9, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '800 9.5px sans-serif';
+        ctx.fillText(cl.count > 99 ? '99+' : String(cl.count), cl.x, cl.y + 0.5);
+      } else {
+        // Pino Individual com Glifo de Categoria
+        ctx.beginPath();
+        ctx.arc(cl.x, cl.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 9px sans-serif';
+        ctx.fillText(catGlyph[st.categoria] || '•', cl.x, cl.y + 0.5);
+
+        if (this.zoom >= 13.6 && !this.isDragging) {
+          const clash = placedLabels.some((b) => Math.abs(b.x - cl.x) < 100 && Math.abs(b.y - cl.y) < 22);
+          if (!clash) {
+            placedLabels.push(cl);
+            ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = pal.roadTextHalo;
+            ctx.strokeText(st.nome.slice(0, 22), cl.x, cl.y - 14);
+            ctx.fillStyle = pal.poiText;
+            ctx.fillText(st.nome.slice(0, 22), cl.x, cl.y - 14);
+          }
         }
       }
     }
