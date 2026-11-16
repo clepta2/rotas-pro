@@ -31,7 +31,10 @@ export class PonteMapEngine {
     this.routeData = null;
     this.vehicleProgress = 0; // 0..100
     this.customPin = null;
+    this.stores = [];
+    this.showStores = Boolean(options.showStores);
     this.onMapClick = options.onMapClick || null;
+    this.onStoreClick = options.onStoreClick || null;
     this.onZoomChange = options.onZoomChange || null;
 
     this.isDragging = false;
@@ -166,6 +169,24 @@ export class PonteMapEngine {
     this.needsRender = true;
   }
 
+  setStores(stores, show = true) {
+    this.stores = Array.isArray(stores) ? stores : [];
+    this.showStores = Boolean(show);
+    this.needsRender = true;
+  }
+
+  _hitTestStore(sx, sy) {
+    if (!this.showStores || !this.stores.length) return null;
+    let best = null;
+    let bestD = 16 * 16;
+    for (const st of this.stores) {
+      const p = this.latLngToScreen(st.lat, st.lng);
+      const d = (p.x - sx) ** 2 + (p.y - sy) ** 2;
+      if (d < bestD) { bestD = d; best = st; }
+    }
+    return best;
+  }
+
   async _loadBrasilLayers() {
     if (this.loadingBrasil || this.brasilGeo) return;
     this.loadingBrasil = true;
@@ -224,8 +245,15 @@ export class PonteMapEngine {
     window.addEventListener('mouseup', (e) => {
       if (this.isDragging && !this.dragMoved && e.target === this.canvas) {
         const rect = this.canvas.getBoundingClientRect();
-        const coords = this.screenToLatLng(e.clientX - rect.left, e.clientY - rect.top);
-        if (this.onMapClick) this.onMapClick(coords);
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const hitStore = this._hitTestStore(sx, sy);
+        if (hitStore && this.onStoreClick) {
+          this.onStoreClick(hitStore);
+        } else {
+          const coords = this.screenToLatLng(sx, sy);
+          if (this.onMapClick) this.onMapClick(coords);
+        }
       }
       this.isDragging = false;
     });
@@ -414,6 +442,11 @@ export class PonteMapEngine {
       this._renderRoute(ctx, pal);
     }
 
+    // 5.5 Camada de Lojas & Comércios Ativos
+    if (this.showStores && this.stores.length > 0) {
+      this._renderStores(ctx, pal);
+    }
+
     // 6. Pin de Clique ("O que há aqui?")
     if (this.customPin) {
       const p = this.latLngToScreen(this.customPin.lat, this.customPin.lng);
@@ -432,6 +465,80 @@ export class PonteMapEngine {
       ctx.restore();
     }
 
+    // 7. Escala Gráfica Dinâmica (km / m)
+    this._renderScaleBar(ctx, pal);
+
+    ctx.restore();
+  }
+
+  _renderStores(ctx, pal) {
+    const catColors = {
+      alimentacao: '#f97316',
+      varejo: '#8b5cf6',
+      saude: '#ef4444',
+      servicos: '#06b6d4'
+    };
+    const placedLabels = [];
+    ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+
+    for (const st of this.stores) {
+      const p = this.latLngToScreen(st.lat, st.lng);
+      if (p.x < -20 || p.x > this.width + 20 || p.y < -20 || p.y > this.height + 20) continue;
+      const col = catColors[st.categoria] || '#10b981';
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      if (this.zoom >= 13.4 && !this.isDragging) {
+        const clash = placedLabels.some((b) => Math.abs(b.x - p.x) < 95 && Math.abs(b.y - p.y) < 22);
+        if (!clash) {
+          placedLabels.push(p);
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = pal.roadTextHalo;
+          ctx.strokeText(st.nome.slice(0, 22), p.x, p.y - 11);
+          ctx.fillStyle = pal.poiText;
+          ctx.fillText(st.nome.slice(0, 22), p.x, p.y - 11);
+        }
+      }
+    }
+  }
+
+  _renderScaleBar(ctx, pal) {
+    const metersPerPx = (156543.03392 * Math.cos((this.lat * Math.PI) / 180)) / Math.pow(2, this.zoom);
+    const targetMeters = metersPerPx * 90;
+    const steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 25000, 50000, 100000];
+    let distM = steps[0];
+    for (const s of steps) {
+      if (s <= targetMeters * 1.4) distM = s;
+    }
+    const barPx = Math.round(distM / metersPerPx);
+    const label = distM >= 1000 ? `${distM / 1000} km` : `${distM} m`;
+
+    const x = 14;
+    const y = this.height - 16;
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+    ctx.beginPath();
+    ctx.roundRect(x - 6, y - 16, barPx + 12, 22, 6);
+    ctx.fill();
+    ctx.strokeStyle = '#f8fafc';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 4);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x + barPx, y);
+    ctx.lineTo(x + barPx, y - 4);
+    ctx.stroke();
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x + barPx / 2, y - 6);
     ctx.restore();
   }
 

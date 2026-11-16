@@ -587,6 +587,9 @@ ${ponteIconsCode}
                       <div id="map-search-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:rgba(15,23,42,0.97);border:1px solid rgba(255,255,255,0.16);border-radius:10px;max-height:220px;overflow-y:auto;z-index:40;box-shadow:0 14px 30px rgba(0,0,0,0.5);"></div>
                     </div>
                     <div class="map-layers-bar">
+                      <button class="map-layer-pill" id="btn-layer-stores" title="Exibir Lojas & Comércios Ativos no Mapa">
+                        <i data-lucide="store" style="width:13px;height:13px;"></i> <span>Lojas Ativas</span>
+                      </button>
                       <button class="map-layer-pill" id="btn-layer-style" title="Alternar Google Maps Claro / Uber Night">
                         <i data-lucide="sun" style="width:13px;height:13px;"></i> <span id="layer-style-label">Google Maps Claro</span>
                       </button>
@@ -602,7 +605,16 @@ ${ponteIconsCode}
                     </div>
                   </div>
 
-                  <!-- Popup Flutuante: O que há aqui? (Clique no Mapa) -->
+                  <!-- Barra de Filtro Rápido de Lojas Ativas (Visível quando Lojas Ativas está ativo) -->
+                  <div id="map-stores-filter-bar" style="display:none;position:absolute;top:96px;left:14px;z-index:20;gap:5px;flex-wrap:wrap;background:rgba(15,23,42,0.92);padding:5px 8px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);backdrop-filter:blur(10px);">
+                    <button class="map-layer-pill is-active store-cat-btn" data-cat="todas" style="height:26px;font-size:10.5px;">Todas</button>
+                    <button class="map-layer-pill store-cat-btn" data-cat="alimentacao" style="height:26px;font-size:10.5px;color:#fb923c;">Alimentação</button>
+                    <button class="map-layer-pill store-cat-btn" data-cat="varejo" style="height:26px;font-size:10.5px;color:#c084fc;">Varejo</button>
+                    <button class="map-layer-pill store-cat-btn" data-cat="saude" style="height:26px;font-size:10.5px;color:#f87171;">Saúde</button>
+                    <button class="map-layer-pill store-cat-btn" data-cat="servicos" style="height:26px;font-size:10.5px;color:#22d3ee;">Serviços</button>
+                  </div>
+
+                  <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
                   <div class="map-place-popup" id="map-place-popup">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;">
                       <strong id="popup-place-title" style="font-size:12.5px;color:#a3e635;">Local Selecionado</strong>
@@ -610,8 +622,9 @@ ${ponteIconsCode}
                     </div>
                     <div id="popup-place-addr" style="font-size:11px;color:#cbd5e1;margin-bottom:6px;line-height:1.35;"></div>
                     <div id="popup-place-coords" style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:8px;"></div>
-                    <div style="display:flex;gap:6px;">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
                       <button id="btn-popup-set-dest" class="primary-button accent" style="height:26px;padding:0 10px;font-size:10.5px;border-radius:6px;">Traçar Rota até Aqui</button>
+                      <button id="btn-popup-cnpj" class="secondary-button" style="display:none;height:26px;padding:0 10px;font-size:10.5px;border-radius:6px;border-color:#38bdf8;color:#38bdf8;">Consultar CNPJ (Receita)</button>
                     </div>
                   </div>
 
@@ -867,6 +880,7 @@ ${ponteIconsCode}
       onMapClick: async (coords) => {
         mapEngine.setCustomPin(coords);
         lastClickedCoords = coords;
+        document.getElementById('btn-popup-cnpj').style.display = 'none';
         const popup = document.getElementById('map-place-popup');
         popup.style.display = 'block';
         document.getElementById('popup-place-title').textContent = 'Consultando CEP Reverso...';
@@ -880,6 +894,70 @@ ${ponteIconsCode}
             document.getElementById('popup-place-addr').textContent = d.enderecoFormatado;
           }
         } catch (_) {}
+      },
+      onStoreClick: (store) => {
+        mapEngine.setCustomPin({ lat: store.lat, lng: store.lng });
+        lastClickedCoords = { lat: store.lat, lng: store.lng };
+        window._selectedStoreName = store.nome;
+        const popup = document.getElementById('map-place-popup');
+        popup.style.display = 'block';
+        document.getElementById('popup-place-title').textContent = store.nome + ' • ' + store.situacaoPresumida;
+        document.getElementById('popup-place-addr').textContent = store.categoria.toUpperCase() + ' (' + store.subcategoria + ') — ' + store.distanciaMetros + 'm de distância (' + store.cidade + ')';
+        document.getElementById('popup-place-coords').textContent = store.lat.toFixed(5) + ', ' + store.lng.toFixed(5);
+        document.getElementById('btn-popup-cnpj').style.display = 'inline-flex';
+      }
+    });
+
+    // Camada Interativa de Lojas & Comércios Ativos
+    let activeStoreCategory = 'todas';
+    async function carregarLojasAtivasNoMapa() {
+      const btn = document.getElementById('btn-layer-stores');
+      if (!btn || !btn.classList.contains('is-active')) return;
+      const t0 = performance.now();
+      try {
+        const q = '?lat=' + mapEngine.lat + '&lng=' + mapEngine.lng + '&raioKm=2.5&categoria=' + activeStoreCategory + '&limite=150';
+        const r = await fetch(API_BASE + '/api/rotas/lojas' + q);
+        const d = await r.json();
+        if (d.valido) {
+          mapEngine.setStores(d.lojas, true);
+          renderJson(d, Math.max(1, Math.round(performance.now() - t0)));
+          showToast(d.exibindo + ' lojas ativas carregadas na região!');
+        }
+      } catch (_) {}
+    }
+
+    document.getElementById('btn-layer-stores')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn.classList.toggle('is-active');
+      const isActive = btn.classList.contains('is-active');
+      document.getElementById('map-stores-filter-bar').style.display = isActive ? 'flex' : 'none';
+      if (isActive) {
+        carregarLojasAtivasNoMapa();
+      } else {
+        mapEngine.setStores([], false);
+      }
+    });
+
+    document.querySelectorAll('.store-cat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.store-cat-btn').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        activeStoreCategory = btn.dataset.cat || 'todas';
+        carregarLojasAtivasNoMapa();
+      });
+    });
+
+    document.getElementById('btn-popup-cnpj')?.addEventListener('click', async () => {
+      const nome = window._selectedStoreName;
+      if (!nome) return;
+      showToast('Consultando Receita Federal via CNPJ Pro...');
+      const t0 = performance.now();
+      try {
+        const r = await fetch('https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=' + encodeURIComponent(nome));
+        const d = await r.json();
+        renderJson(d, Math.max(1, Math.round(performance.now() - t0)));
+      } catch (err) {
+        renderJson({ erro: 'FALHA_CONSULTA_CNPJ', mensagem: err.message }, 0);
       }
     });
 

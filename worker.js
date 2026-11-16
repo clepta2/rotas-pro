@@ -16,12 +16,15 @@ import { rotearPorMalhaRealR2 } from './astar-routing.js';
 import {
   geocodificarLocal,
   geocodificarReverso,
+  calcularDistanciaHaversineKm,
   calcularRotaCompleta,
   otimizarRotaMultiParadas,
   calcularTrackingViagemAoVivo,
   renderizarMapaRotaSvg,
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
+
+let memLojasCache = null;
 
 function gerarTileSinteticoLocal(z, x, y) {
   const seed = (Number(x) * 31 + Number(y) * 17 + Number(z)) % 97;
@@ -306,6 +309,71 @@ export default {
         }
       }
       return jsonResp({ valido: true, query: q, total: results.length, resultados: results });
+    }
+
+    // ── CAMADA DE LOJAS & COMÉRCIOS ATIVOS POR RAIO E CATEGORIA (100% SOBERANO R2 + CNPJ PRO) ──
+    if (pathname === '/api/rotas/lojas') {
+      const lat = parseFloat(url.searchParams.get('lat') || '-23.5614');
+      const lng = parseFloat(url.searchParams.get('lng') || '-46.6558');
+      const raioKm = Math.min(20, Math.max(0.2, parseFloat(url.searchParams.get('raioKm') || '2.5')));
+      const categoria = (url.searchParams.get('categoria') || 'todas').toLowerCase().trim();
+      const q = (url.searchParams.get('q') || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const limite = Math.min(300, Math.max(1, parseInt(url.searchParams.get('limite') || '150', 10)));
+
+      if (!memLojasCache && env && env.ROTAS_R2) {
+        try {
+          const obj = await env.ROTAS_R2.get('geo/lojas-ativas.json');
+          if (obj) memLojasCache = await obj.json();
+        } catch (_) {}
+      }
+
+      const baseLojas = Array.isArray(memLojasCache) ? memLojasCache : [];
+      const filtradas = [];
+
+      // Filtro rápido por bounding box antes do Haversine para latência <2ms
+      const dLatMax = raioKm / 111.0;
+      const dLngMax = raioKm / 95.0;
+
+      for (const lj of baseLojas) {
+        if (Math.abs(lj.lat - lat) > dLatMax || Math.abs(lj.lng - lng) > dLngMax) continue;
+        if (categoria !== 'todas' && lj.cat !== categoria) continue;
+        if (q) {
+          const normN = lj.n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (!normN.includes(q)) continue;
+        }
+        const dist = calcularDistanciaHaversineKm(lat, lng, lj.lat, lj.lng);
+        if (dist <= raioKm) {
+          filtradas.push({
+            id: lj.id,
+            nome: lj.n,
+            categoria: lj.cat,
+            subcategoria: lj.sub,
+            cidade: lj.c,
+            lat: lj.lat,
+            lng: lj.lng,
+            situacaoPresumida: 'ATIVA',
+            distanciaKm: Number(dist.toFixed(2)),
+            distanciaMetros: Math.round(dist * 1000),
+            tempoAPeMin: Math.max(1, Math.round((dist / 4.5) * 60)),
+            tempoMotoMin: Math.max(1, Math.round((dist / 32.0) * 60)),
+            cnpjProBuscaUrl: `https://cnpj-pro-api.maputo3.workers.dev/api/cnpj/busca?q=${encodeURIComponent(lj.n)}`
+          });
+        }
+      }
+
+      filtradas.sort((a, b) => a.distanciaKm - b.distanciaKm);
+      const sliced = filtradas.slice(0, limite);
+
+      return jsonResp({
+        valido: true,
+        centro: { lat, lng },
+        raioKm,
+        categoria,
+        totalCatalogo: baseLojas.length,
+        totalEncontradasNoRaio: filtradas.length,
+        exibindo: sliced.length,
+        lojas: sliced
+      });
     }
 
     // ── CAMADAS NACIONAIS DO BRASIL (IBGE UFs + RIOS + RODOVIAS + MANCHAS URBANAS DO R2) ──
