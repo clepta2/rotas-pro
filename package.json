@@ -1,0 +1,11 @@
+{
+  "name": "rotas-pro",
+  "version": "1.0.0",
+  "description": "API e motor geoespacial de cálculo de rotas e distâncias entre todos os 5.570 municípios do Brasil",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": ["rotas", "distancias", "ibge", "municipios", "logistica"],
+  "license": "MIT"
+}
