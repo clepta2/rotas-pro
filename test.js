@@ -12,8 +12,11 @@ import {
   aplicarOffsetMaoDireita,
   calcularTelemetriaVelocidade,
   detectarPontesViadutosNaRota,
+  detectarRotatoriasNaRota,
+  gerarArcoRotatoria,
   gerarRotasAlternativas,
-  diagnosticarPlacaNaRota
+  diagnosticarPlacaNaRota,
+  ajustarGpsNaMalhaViaria
 } from './rotas-pro.js';
 import { calcularCicloSemaforico } from './sinalizacao.js';
 import { GEO_MUNICIPIOS_IBGE } from './municipios_geo.js';
@@ -237,6 +240,15 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
   assert(Array.isArray(pontesRota.pontesNaRota), 'Deve retornar array de pontes no trajeto');
   assert(typeof pontesRota.alertaGabarito === 'boolean', 'Deve avaliar alerta de gabarito vertical de pontes');
 
+  // Teste de Bloqueio Automático de Gabarito para Caminhão de 4.40m em Viaduto Baixo
+  const rotaComViadutoBaixo = [
+    { lat: -23.5240, lng: -46.6780, progresso: 50 },
+    { lat: -23.5250, lng: -46.6780, progresso: 51 }
+  ];
+  const bloqueio = detectarPontesViadutosNaRota(rotaComViadutoBaixo, 4.40);
+  assert(bloqueio.alertaGabarito === true, 'Caminhão de 4.40m deve ser bloqueado em viaduto de 4.10m');
+  assert(bloqueio.statusGabaritoGeral === 'VIOLACAO_GABARITO_ALTURA_PONTE', 'Status deve indicar violação de gabarito');
+
   // Teste de Rotas Alternativas
   const rotasAlts = gerarRotasAlternativas(
     { lat: -23.5614, lng: -46.6558 },
@@ -248,6 +260,47 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
   assert(rotasAlts.length === 2, 'Deve gerar 2 rotas alternativas para opção de desvio');
   assert(rotasAlts[0].distanciaViariaKm > 0 && rotasAlts[1].distanciaViariaKm > 0, 'Rotas alternativas devem ter distâncias válidas');
   assert(rotasAlts[0].waypoints.length === rotaUrbana.length, 'Waypoints das rotas alternativas devem ser consistentes');
+
+  // Teste de Snap to Road (Map Matching do GPS na Rua)
+  const snap = ajustarGpsNaMalhaViaria(-23.5592, -46.6580, rotaUrbana, 60);
+  assert(snap.valido === true, 'Snap-to-Road deve ser válido');
+  assert(snap.snapped === true, 'GPS próximo da via deve fazer snap na rua');
+  assert(snap.distanciaSnapMetros > 0 && snap.distanciaSnapMetros <= 60, 'Distância de snap deve ser coerente');
+  assert(snap.pontoAjustadoNaRua.lat !== undefined && snap.pontoAjustadoNaRua.lng !== undefined, 'Deve retornar coordenadas corrigidas no asfalto');
+
+  // Teste de Rotatórias (inclusive sobre canais) e Traçado sem Zigue-Zague
+  const arcoRot = gerarArcoRotatoria({ lat: -23.9642, lng: -46.3331 }, 38, Math.PI, 0, 6);
+  assert(arcoRot.length === 7 && arcoRot.every((p) => p.rotatoria === true), 'Arco de rotatória deve gerar pontos circulares suaves marcados como rotatória');
+
+  const rotaSantosCanal = gerarWaypointsMalhaViaria(
+    { lat: -23.9580, lng: -46.3331 },
+    { lat: -23.9700, lng: -46.3331 }
+  );
+  const rotDetect = detectarRotatoriasNaRota(rotaSantosCanal);
+  assert(rotDetect.totalRotatorias >= 1 && rotDetect.possuiRotatoriaSobreCanal === true, 'Deve detectar rotatória sobre canal em Santos (Canal 3)');
+
+  // Rota longa fora de corredores (> 5 km) não pode gerar escada em zigue-zague
+  const rotaLongaSemCorredor = gerarWaypointsMalhaViaria(
+    { lat: -23.5000, lng: -46.7000 },
+    { lat: -23.5500, lng: -46.6200 }
+  );
+  let inversoesSinal = 0;
+  let prevSign = 0;
+  for (let i = 1; i < rotaLongaSemCorredor.length - 1; i++) {
+    const a = rotaLongaSemCorredor[i - 1];
+    const b = rotaLongaSemCorredor[i];
+    const c = rotaLongaSemCorredor[i + 1];
+    const v1x = b.lng - a.lng; const v1y = b.lat - a.lat;
+    const v2x = c.lng - b.lng; const v2y = c.lat - b.lat;
+    const denom = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y);
+    const sinTheta = denom > 0 ? (v1x * v2y - v1y * v2x) / denom : 0;
+    if (Math.abs(sinTheta) > 0.05) {
+      const sign = sinTheta > 0 ? 1 : -1;
+      if (prevSign !== 0 && sign !== prevSign) inversoesSinal++;
+      prevSign = sign;
+    }
+  }
+  assert(inversoesSinal <= 2, `Rota longa fora de corredor não deve fazer zigue-zague em escada (inversões: ${inversoesSinal})`);
 }
 
 console.log('\n========================================');

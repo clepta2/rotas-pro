@@ -487,6 +487,7 @@ export function decodeMvtToHqTile(uint8Array, z = 14) {
     if (cls === 'ferry') continue;
     const sub = f.props.subclass || '';
     const isLink = /_link$/.test(sub) || f.props.ramp === 1;
+    const isRoundaboutProp = sub === 'roundabout' || f.props.junction === 'roundabout' || f.props.roundabout === 1;
     const rank = ROAD_RANK[cls] ?? 3;
     if (z < 14 && rank <= 2) continue;
     if (z <= 12 && rank <= 3) continue;
@@ -497,6 +498,20 @@ export function decodeMvtToHqTile(uint8Array, z = 14) {
       else if (f.props.brunnel === 'tunnel') o.b = 2;
       if (f.props.oneway === 1 || f.props.oneway === -1) o.o = f.props.oneway;
       if (isLink) o.lk = 1;
+      if (isRoundaboutProp) {
+        o.rb = 1;
+      } else if (f.props.oneway === 1 && r.length >= 6) {
+        const dEnd = Math.hypot(r[0][0] - r[r.length - 1][0], r[0][1] - r[r.length - 1][1]);
+        if (dEnd < 24) {
+          let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+          for (const pt of r) {
+            if (pt[0] < minX) minX = pt[0]; if (pt[0] > maxX) maxX = pt[0];
+            if (pt[1] < minY) minY = pt[1]; if (pt[1] > maxY) maxY = pt[1];
+          }
+          const span = Math.max(maxX - minX, maxY - minY);
+          if (span >= 18 && span <= 480) o.rb = 1;
+        }
+      }
       if (f.props.layer) o.l = Number(f.props.layer);
       if (sub === 'footway' || sub === 'pedestrian' || sub === 'steps' || sub === 'cycleway') o.sv = sub;
       if (f.props.surface === 'unpaved') o.u = 1;
@@ -545,7 +560,10 @@ export function hqToRoutingTile(hq) {
     if (!ROUTABLE.has(r.k) || r.sv) continue;
     const ring = [];
     for (let i = 0; i < r.c.length; i += 2) ring.push([Math.round(r.c[i] * s), Math.round(r.c[i + 1] * s)]);
-    road.push({ c: [ring], cls: r.k, ow: r.o || 0 });
+    const entry = { c: [ring], cls: r.k, ow: r.o || 0 };
+    if (r.rb) entry.rb = 1;
+    if (r.b) entry.b = r.b;
+    road.push(entry);
   }
   const seen = new Set();
   for (const nm of hq.name) {

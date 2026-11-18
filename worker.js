@@ -22,6 +22,10 @@ import {
   calcularTrackingViagemAoVivo,
   renderizarMapaRotaSvg,
   calcularTelemetriaVelocidade,
+  ajustarGpsNaMalhaViaria,
+  detectarPontesViadutosNaRota,
+  detectarRotatoriasNaRota,
+  gerarRotasAlternativas,
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
 import {
@@ -73,6 +77,11 @@ async function enriquecerRotaComAStar(rota, env) {
       };
       rota.resumoViagem.distanciaViariaKm = astar.distanciaRealKm;
       rota.resumoViagem.distanciaFormatada = `${astar.distanciaRealKm.toFixed(1).replace('.', ',')} km`;
+      const alturaV = rota.inteligenciaVeicularPlacasPro?.especificacoesFisicas?.alturaTotalMetros
+        || (rota.modalSelecionado === 'caminhao' ? 4.40 : 1.50);
+      rota.pontesEViadutos = detectarPontesViadutosNaRota(astar.waypoints, alturaV);
+      rota.rotatoriasNaRota = detectarRotatoriasNaRota(astar.waypoints);
+      rota.rotasAlternativas = gerarRotasAlternativas(rota.origem, rota.destino, astar.waypoints, rota.modalSelecionado || 'carro', alturaV);
       if (astar.viasAtravessadas && astar.viasAtravessadas.length > 0) {
         rota.viasPrincipaisNaRota = astar.viasAtravessadas;
         // Atualiza os passos turn-by-turn com os nomes reais das ruas atravessadas!
@@ -481,6 +490,25 @@ export default {
         ...telemetria,
         viaNome: viaInfo,
         coordenadas: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
+      });
+    }
+
+    // ── MAP MATCHING / SNAP TO ROAD: ENCAIXA GPS DO CELULAR NA RUA MAIS PRÓXIMA ──
+    if (pathname === '/api/rotas/gps/snap' || pathname === '/api/rotas/gps/acompanhar') {
+      const lat = parseFloat(url.searchParams.get('lat'));
+      const lng = parseFloat(url.searchParams.get('lng'));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return jsonResp({ valido: false, erro: 'Parâmetros lat e lng obrigatórios' }, 400);
+      }
+      const heading = url.searchParams.get('heading') ? parseFloat(url.searchParams.get('heading')) : null;
+      const speed = url.searchParams.get('speed') ? parseFloat(url.searchParams.get('speed')) : null;
+
+      const snap = ajustarGpsNaMalhaViaria(lat, lng, null, 65);
+      return jsonResp({
+        ...snap,
+        velocidadeKmh: speed,
+        headingOriginal: heading,
+        timestamp: new Date().toISOString()
       });
     }
 

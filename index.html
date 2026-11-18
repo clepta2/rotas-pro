@@ -314,6 +314,11 @@
       color: #f59e0b;
       border: 1px solid rgba(245, 158, 11, 0.3);
     }
+    .status-badge-pill.red {
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
     .specs-table {
       width: 100%;
       border-collapse: collapse;
@@ -804,6 +809,17 @@
                     <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Pedágios na Rota</div>
                     <div id="card-val-pedagio" style="font-size:17px;font-weight:900;color:var(--ink);font-family:monospace;margin-top:2px;">R$ 0,00</div>
                     <div id="card-qtd-pedagio" style="font-size:10.5px;color:var(--muted);">0 praças</div>
+                  </div>
+                </div>
+
+                <!-- Status de Viabilidade de Passagem (Pontes, Gabarito e Restrições) -->
+                <div id="card-viabilidade-box" style="margin-bottom:16px;padding:12px 16px;border-radius:var(--radius-md);background:var(--paper-elevated,#111827);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span id="viabilidade-badge" class="status-badge-pill green" style="font-size:11px;">PASSAGEM AUTORIZADA</span>
+                    <span id="viabilidade-msg" style="font-size:12px;font-weight:700;color:var(--ink);">Gabarito vertical e vias compatíveis com o veículo</span>
+                  </div>
+                  <div id="viabilidade-caminhao-tag" style="font-size:11px;color:var(--muted);font-weight:600;">
+                    Altura: 1,50m • Folga: Livre
                   </div>
                 </div>
 
@@ -1539,6 +1555,23 @@
             bannerClearance.style.display = 'none';
           }
 
+          // Atualiza status de viabilidade viária (Dá para passar ou não dá)
+          const viabBadge = document.getElementById('viabilidade-badge');
+          const viabMsg = document.getElementById('viabilidade-msg');
+          const viabTag = document.getElementById('viabilidade-caminhao-tag');
+          const pInfo = r.pontesEViadutos;
+          const altV = (pInfo && pInfo.alturaVeiculoConsideradaM) || 1.50;
+
+          if (pInfo && pInfo.alertaGabarito) {
+            if (viabBadge) { viabBadge.className = 'status-badge-pill red'; viabBadge.textContent = '❌ NÃO DÁ PARA PASSAR'; }
+            if (viabMsg) { viabMsg.textContent = pInfo.mensagemGabarito; viabMsg.style.color = '#ef4444'; }
+            if (viabTag) viabTag.textContent = 'Veículo: ' + altV + 'm • Bloqueio de Gabarito';
+          } else {
+            if (viabBadge) { viabBadge.className = 'status-badge-pill green'; viabBadge.textContent = '✅ DÁ PARA PASSAR'; }
+            if (viabMsg) { viabMsg.textContent = (pInfo && pInfo.totalPontes > 0) ? 'Passagem 100% liberada por todas as ' + pInfo.totalPontes + ' pontes e viadutos' : 'Percurso livre de pontes restritivas'; viabMsg.style.color = 'var(--ink)'; }
+            if (viabTag) viabTag.textContent = 'Altura: ' + altV + 'm • Gabarito Seguro';
+          }
+
           const stepsHtml = (r.passoAPassoTurnByTurn || []).map(s =>
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;background:var(--paper-elevated,#111827);border:1px solid var(--line);">' +
               '<span><strong>' + s.ordem + '.</strong> ' + s.instrucao + '</span>' +
@@ -1720,19 +1753,23 @@
           const speedKmh = speedMs !== null && speedMs >= 0 ? (speedMs * 3.6) : null;
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
+          const heading = pos.coords.heading;
           lbl.textContent = speedKmh !== null ? (speedKmh.toFixed(0) + ' km/h') : 'GPS Conectado';
 
+          // Snap to Road instantâneo no Canvas: encaixa na via e acompanha em tempo real
+          const snapLocal = mapEngine.snapGpsLocation(lat, lng, heading, speedKmh, currentModal);
+
           try {
-            const q = '?lat=' + lat + '&lng=' + lng + '&modal=' + currentModal + '&velocidadeGps=' + (speedKmh !== null ? speedKmh.toFixed(1) : '');
-            const r = await fetch(API_BASE + '/api/rotas/velocidade' + q);
+            const q = '?lat=' + lat + '&lng=' + lng + '&modal=' + currentModal + '&speed=' + (speedKmh !== null ? speedKmh.toFixed(1) : '');
+            const r = await fetch(API_BASE + '/api/rotas/gps/snap' + q);
             const d = await r.json();
             if (d.valido) {
               const hud = document.getElementById('map-live-gps-hud');
               if (hud) hud.style.display = 'block';
-              document.getElementById('hud-gps-speed').textContent = d.velocidadeFormatada;
-              if (d.limiteViaKmh) document.getElementById('hud-gps-limit').textContent = String(d.limiteViaKmh);
-              if (d.statusSeguranca === 'INFRACAO_GRAVE_VELOCIDADE') {
-                showToast('Atenção: ' + d.velocidadeFormatada + ' (Limite ' + d.limiteViaKmh + ' km/h)');
+              if (d.velocidadeKmh !== null) document.getElementById('hud-gps-speed').textContent = Math.round(d.velocidadeKmh) + ' km/h';
+              if (d.viaIdentificada) document.getElementById('hud-gps-street').textContent = 'Via atual (Snap): ' + d.viaIdentificada;
+              if (d.snapped) {
+                showToast('GPS calibrado na via: ' + (d.viaIdentificada || 'Pista Principal'));
               }
             }
           } catch (_) {}

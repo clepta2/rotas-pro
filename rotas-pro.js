@@ -826,6 +826,211 @@ export function detectarPontesViadutosNaRota(waypoints, alturaVeiculoM = 1.50) {
   };
 }
 
+// ─── 8.6 CATÁLOGO SOBERANO DE ROTATÓRIAS & ROTATÓRIAS SOBRE CANAIS/VIADUTOS ───
+
+export const ROTATORIAS_BRASIL = [
+  {
+    id: 'rot_praca_independencia_santos',
+    nome: 'Praça da Independência (Rotatória Canal 3 / Gonzaga)',
+    cidade: 'Santos',
+    uf: 'SP',
+    coordenadas: { lat: -23.9642, lng: -46.3331 },
+    raioM: 38,
+    sobreCanal: true,
+    canalNome: 'Canal 3 (Av. Washington Luís)',
+    saidas: 4
+  },
+  {
+    id: 'rot_praca_bandeiras_santos',
+    nome: 'Praça das Bandeiras (Orla / Canal 3)',
+    cidade: 'Santos',
+    uf: 'SP',
+    coordenadas: { lat: -23.9688, lng: -46.3335 },
+    raioM: 34,
+    sobreCanal: true,
+    canalNome: 'Canal 3 / Orla do Gonzaga',
+    saidas: 4
+  },
+  {
+    id: 'rot_canal4_orla_santos',
+    nome: 'Rotatória Canal 4 / Av. Bartolomeu de Gusmão',
+    cidade: 'Santos',
+    uf: 'SP',
+    coordenadas: { lat: -23.9726, lng: -46.3228 },
+    raioM: 30,
+    sobreCanal: true,
+    canalNome: 'Canal 4 (Av. Siqueira Campos)',
+    saidas: 4
+  },
+  {
+    id: 'rot_praca_panamericana_sp',
+    nome: 'Praça Panamericana (Alto de Pinheiros)',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5536, lng: -46.7088 },
+    raioM: 55,
+    sobreCanal: false,
+    canalNome: null,
+    saidas: 6
+  },
+  {
+    id: 'rot_praca_charles_miller_sp',
+    nome: 'Praça Charles Miller (Pacaembu)',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5462, lng: -46.6652 },
+    raioM: 42,
+    sobreCanal: true,
+    canalNome: 'Córrego Pacaembu (Canalizado)',
+    saidas: 5
+  },
+  {
+    id: 'rot_praca_oswaldo_cruz_sp',
+    nome: 'Praça Oswaldo Cruz (Início Av. Paulista / 23 de Maio)',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5706, lng: -46.6448 },
+    raioM: 36,
+    sobreCanal: true,
+    canalNome: 'Complexo Viário 23 de Maio / Paraíso',
+    saidas: 5
+  },
+  {
+    id: 'rot_praca_maua_rj',
+    nome: 'Rotatória Orla Conde / Praça Mauá',
+    cidade: 'Rio de Janeiro',
+    uf: 'RJ',
+    coordenadas: { lat: -22.8965, lng: -43.1802 },
+    raioM: 35,
+    sobreCanal: true,
+    canalNome: 'Baía de Guanabara / Cais do Porto',
+    saidas: 4
+  },
+  {
+    id: 'rot_praca_bandeira_rj',
+    nome: 'Rotatória Praça da Bandeira (Canal do Mangue)',
+    cidade: 'Rio de Janeiro',
+    uf: 'RJ',
+    coordenadas: { lat: -22.9122, lng: -43.2135 },
+    raioM: 48,
+    sobreCanal: true,
+    canalNome: 'Canal do Mangue',
+    saidas: 5
+  },
+  {
+    id: 'rot_tres_poderes_df',
+    nome: 'Rotatória Eixo Monumental / Praça dos Três Poderes',
+    cidade: 'Brasília',
+    uf: 'DF',
+    coordenadas: { lat: -15.7998, lng: -47.8645 },
+    raioM: 60,
+    sobreCanal: false,
+    canalNome: null,
+    saidas: 4
+  }
+];
+
+/**
+ * Gera um arco circular suave no sentido anti-horário (padrão de circulação no Brasil)
+ * para contornar a ilha central de uma rotatória sem quinas ou zigue-zague.
+ */
+export function gerarArcoRotatoria(centro, raioM = 35, anguloEntradaRad = Math.PI, anguloSaidaRad = 0, passos = 8) {
+  const cosLat = Math.cos((centro.lat * Math.PI) / 180);
+  const mLat = 111320;
+  const mLng = 111320 * cosLat;
+
+  // Sentido anti-horário no plano cartesiano (ângulo crescente)
+  let delta = anguloSaidaRad - anguloEntradaRad;
+  while (delta <= 0.15) delta += Math.PI * 2;
+  if (delta > Math.PI * 1.85) delta = Math.PI * 0.75;
+
+  const n = Math.max(4, passos);
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const ang = anguloEntradaRad + (delta * i) / n;
+    const dx = Math.cos(ang) * raioM;
+    const dy = Math.sin(ang) * raioM;
+    pts.push({
+      lat: Number((centro.lat + dy / mLat).toFixed(6)),
+      lng: Number((centro.lng + dx / mLng).toFixed(6)),
+      progresso: 0,
+      rotatoria: true
+    });
+  }
+  return pts;
+}
+
+/**
+ * Detecta rotatórias (inclusive rotatórias elevadas sobre canais/córregos) ao longo da rota.
+ */
+export function detectarRotatoriasNaRota(waypoints) {
+  if (!Array.isArray(waypoints) || waypoints.length < 2) {
+    return { totalRotatorias: 0, rotatoriasNaRota: [], possuiRotatoriaSobreCanal: false };
+  }
+
+  const encontradas = [];
+  const vistas = new Set();
+
+  for (const rot of ROTATORIAS_BRASIL) {
+    const raioDeteccaoKm = Math.max(0.14, (rot.raioM * 3.2) / 1000);
+    for (let i = 0; i < waypoints.length; i++) {
+      const wp = waypoints[i];
+      const dKm = calcularDistanciaHaversineKm(wp.lat, wp.lng, rot.coordenadas.lat, rot.coordenadas.lng);
+      if (dKm <= raioDeteccaoKm && !vistas.has(rot.id)) {
+        vistas.add(rot.id);
+        encontradas.push({
+          ...rot,
+          progressoRotaPct: wp.progresso ?? Math.round((i / (waypoints.length - 1)) * 100),
+          instrucao: rot.sobreCanal
+            ? `Contorne a rotatória ${rot.nome} (sobre ${rot.canalNome}) pela direita em sentido anti-horário`
+            : `Contorne a rotatória ${rot.nome} pela direita em sentido anti-horário`
+        });
+        break;
+      }
+    }
+  }
+
+  return {
+    totalRotatorias: encontradas.length,
+    rotatoriasNaRota: encontradas,
+    possuiRotatoriaSobreCanal: encontradas.some((r) => r.sobreCanal)
+  };
+}
+
+function aplicarContornoRotatoriasNaRota(waypoints) {
+  if (!Array.isArray(waypoints) || waypoints.length < 4) return waypoints;
+  const cosLat = Math.cos((waypoints[0].lat * Math.PI) / 180);
+  const mLat = 111320;
+  const mLng = 111320 * cosLat;
+
+  let atual = waypoints;
+  for (const rot of ROTATORIAS_BRASIL) {
+    const raioDetM = Math.max(95, rot.raioM * 2.4);
+    let idxMin = -1;
+    let minD = Infinity;
+    for (let i = 1; i < atual.length - 1; i++) {
+      const d = Math.hypot(
+        (atual[i].lng - rot.coordenadas.lng) * mLng,
+        (atual[i].lat - rot.coordenadas.lat) * mLat
+      );
+      if (d < minD) { minD = d; idxMin = i; }
+    }
+    if (idxMin > 0 && idxMin < atual.length - 1 && minD <= raioDetM) {
+      const pIn = atual[Math.max(0, idxMin - 1)];
+      const pOut = atual[Math.min(atual.length - 1, idxMin + 1)];
+      const angIn = Math.atan2((pIn.lat - rot.coordenadas.lat) * mLat, (pIn.lng - rot.coordenadas.lng) * mLng);
+      const angOut = Math.atan2((pOut.lat - rot.coordenadas.lat) * mLat, (pOut.lng - rot.coordenadas.lng) * mLng);
+      const arco = gerarArcoRotatoria(rot.coordenadas, rot.raioM, angIn, angOut, 7);
+      atual = [
+        ...atual.slice(0, idxMin),
+        ...arco,
+        ...atual.slice(idxMin + 1)
+      ];
+    }
+  }
+  return atual;
+}
+
 // ─── 9. MOTOR DE GEOMETRIA VIÁRIA, CORREDORES RODOVIÁRIOS E CURVAS REALISTAS ───
 
 export const CORREDORES_RODOVIARIOS_BRASIL = [
@@ -858,15 +1063,28 @@ export const CORREDORES_RODOVIARIOS_BRASIL = [
     id: 'imigrantes_sp_santos',
     nome: 'Rodovia dos Imigrantes (SP-160)',
     trechos: [
-      { lat: -23.5505, lng: -46.6333 },
-      { lat: -23.6450, lng: -46.6410 },
-      { lat: -23.6900, lng: -46.6150 },
-      { lat: -23.8150, lng: -46.5410 },
-      { lat: -23.8500, lng: -46.5200 },
-      { lat: -23.9000, lng: -46.4700 },
-      { lat: -23.9180, lng: -46.4350 },
-      { lat: -23.9450, lng: -46.3800 },
-      { lat: -23.9678, lng: -46.3322 }
+      { lat: -23.5505, lng: -46.6333 }, // Praça da Sé (São Paulo - SP)
+      { lat: -23.5680, lng: -46.6415 }, // Av. 23 de Maio / Viaduto Pedroso
+      { lat: -23.5825, lng: -46.6475 }, // Av. 23 de Maio / Tutóia
+      { lat: -23.6040, lng: -46.6545 }, // Av. Rubem Berta / Ayrton Senna
+      { lat: -23.6220, lng: -46.6510 }, // Av. Washington Luís / Bandeirantes
+      { lat: -23.6350, lng: -46.6430 }, // Viaduto Ministro Aliomar Baleeiro
+      { lat: -23.6450, lng: -46.6410 }, // Início SP-160 / Jabaquara Km 11
+      { lat: -23.6700, lng: -46.6310 }, // Diadema Norte Km 14
+      { lat: -23.6900, lng: -46.6150 }, // Piraporinha Km 16
+      { lat: -23.7250, lng: -46.5920 }, // Praça de Pedágio Diadema Km 20
+      { lat: -23.7750, lng: -46.5650 }, // Entroncamento Rodoanel Mário Covas
+      { lat: -23.8150, lng: -46.5410 }, // Planalto Km 32
+      { lat: -23.8350, lng: -46.5300 }, // Pedágio Principal Piratininga Km 32
+      { lat: -23.8500, lng: -46.5200 }, // Início Descida da Serra / Túnel 1
+      { lat: -23.8720, lng: -46.5050 }, // Serra do Mar / Viadutos Curvos
+      { lat: -23.8900, lng: -46.4820 }, // Túneis da Serra dos Imigrantes / Km 48
+      { lat: -23.9000, lng: -46.4700 }, // Cubatão / Entroncamento Anchieta
+      { lat: -23.9180, lng: -46.4350 }, // Ponte do Mar Pequeno / São Vicente
+      { lat: -23.9350, lng: -46.4050 }, // Acesso Santos / Chico de Paula
+      { lat: -23.9450, lng: -46.3800 }, // Av. Martins Fontes / Valongo
+      { lat: -23.9550, lng: -46.3550 }, // Av. Waldemar Leão / Túnel Rubens Ferreira
+      { lat: -23.9678, lng: -46.3322 }  // Av. Presidente Wilson (Orla do Gonzaga - Santos)
     ]
   },
   {
@@ -1026,6 +1244,41 @@ export function gerarWaypointsMalhaViaria(origem, destino, numSegmentos = 16) {
         subTrechos.push(tr[k]);
       }
 
+      // Evita gancho/retorno na entrada e saída do corredor projetando origem/destino no primeiro/último segmento
+      const cosC = Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+      const kxC = 111320 * cosC;
+      const kyC = 111320;
+      if (subTrechos.length >= 2) {
+        const a0 = subTrechos[0];
+        const a1 = subTrechos[1];
+        const vx = (a1.lng - a0.lng) * kxC;
+        const vy = (a1.lat - a0.lat) * kyC;
+        const len2 = vx * vx + vy * vy;
+        if (len2 > 1) {
+          const tO = ((lng1 - a0.lng) * kxC * vx + (lat1 - a0.lat) * kyC * vy) / len2;
+          if (tO > 0.15 && tO < 0.95) {
+            subTrechos[0] = {
+              lat: Number((a0.lat + (a1.lat - a0.lat) * tO).toFixed(6)),
+              lng: Number((a0.lng + (a1.lng - a0.lng) * tO).toFixed(6))
+            };
+          }
+        }
+        const b0 = subTrechos[subTrechos.length - 2];
+        const b1 = subTrechos[subTrechos.length - 1];
+        const ux = (b1.lng - b0.lng) * kxC;
+        const uy = (b1.lat - b0.lat) * kyC;
+        const ulen2 = ux * ux + uy * uy;
+        if (ulen2 > 1) {
+          const tD = ((lng2 - b0.lng) * kxC * ux + (lat2 - b0.lat) * kyC * uy) / ulen2;
+          if (tD > 0.05 && tD < 0.85) {
+            subTrechos[subTrechos.length - 1] = {
+              lat: Number((b0.lat + (b1.lat - b0.lat) * tD).toFixed(6)),
+              lng: Number((b0.lng + (b1.lng - b0.lng) * tD).toFixed(6))
+            };
+          }
+        }
+      }
+
       const pts = [{ lat: Number(lat1.toFixed(6)), lng: Number(lng1.toFixed(6)), progresso: 0 }];
       for (let i = 0; i < subTrechos.length - 1; i++) {
         const a = subTrechos[i];
@@ -1041,53 +1294,95 @@ export function gerarWaypointsMalhaViaria(origem, destino, numSegmentos = 16) {
         }
       }
       pts.push({ lat: Number(lat2.toFixed(6)), lng: Number(lng2.toFixed(6)), progresso: 100 });
-      for (let k = 0; k < pts.length; k++) {
-        pts[k].progresso = Math.round((k / (pts.length - 1)) * 100);
+      const comRotatorias = aplicarContornoRotatoriasNaRota(pts);
+      const suavizada = suavizarCurvasEsquinas(comRotatorias, ehUrbano ? 18 : 42, 3);
+      for (let k = 0; k < suavizada.length; k++) {
+        suavizada[k].progresso = Math.round((k / (suavizada.length - 1)) * 100);
       }
-      return suavizarCurvasEsquinas(pts, ehUrbano ? 16 : 40, 3);
+      return suavizada;
     }
   }
 
-  // 2. Trajeto Urbano ou Regional: gera rota ortogonal (grid de ruas) com esquinas chanfradas
-  // evitando atravessar quarteirões e prédios em diagonal
-  const dLat = lat2 - lat1;
-  const dLng = lng2 - lng1;
-  const totalSteps = Math.max(numSegmentos, 20);
+  // 2. Trajeto Urbano ou Regional: eixos arteriais limpos (máximo 1 ou 2 conversões suaves, ZERO escada em zigue-zague)
+  const cosLatMed = Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+  const mLatMed = 111320;
+  const mLngMed = 111320 * cosLatMed;
+
+  const dxMeters = (lng2 - lng1) * mLngMed;
+  const dyMeters = (lat2 - lat1) * mLatMed;
+  const distTotalM = Math.hypot(dxMeters, dyMeters);
+
+  const quadras = [{ lat: Number(lat1.toFixed(6)), lng: Number(lng1.toFixed(6)) }];
+  const absDx = Math.abs(dxMeters);
+  const absDy = Math.abs(dyMeters);
+
+  if (distTotalM < 450) {
+    // Curto percurso urbano: direto se alinhado, ou 1 conversão limpa em L
+    if (absDx >= 25 && absDy >= 25) {
+      const midLat = absDy > absDx ? lat1 + (lat2 - lat1) * 0.72 : lat1;
+      const midLng = absDy > absDx ? lng1 : lng1 + (lng2 - lng1) * 0.72;
+      quadras.push({ lat: Number(midLat.toFixed(6)), lng: Number(midLng.toFixed(6)) });
+    }
+  } else if (distTotalM < 3500) {
+    // Percurso urbano médio: 1 eixo arterial principal (L ou Z suave sem zigue-zague)
+    if (absDx < 60 || absDy < 60) {
+      // Quase alinhado em um eixo: segue direto pela avenida
+    } else if (Math.min(absDx, absDy) < distTotalM * 0.25) {
+      // 1 conversão limpa em L
+      const midLat = absDy >= absDx ? lat2 : lat1;
+      const midLng = absDy >= absDx ? lng1 : lng2;
+      quadras.push({ lat: Number(midLat.toFixed(6)), lng: Number(midLng.toFixed(6)) });
+    } else {
+      // 2 conversões limpas em Z (saída local -> avenida arterial -> acesso destino)
+      if (absDy >= absDx) {
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.22).toFixed(6)), lng: Number(lng1.toFixed(6)) });
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.78).toFixed(6)), lng: Number(lng2.toFixed(6)) });
+      } else {
+        quadras.push({ lat: Number(lat1.toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.22).toFixed(6)) });
+        quadras.push({ lat: Number(lat2.toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.78).toFixed(6)) });
+      }
+    }
+  } else {
+    // Percurso urbano longo / regional: corredor expresso contínuo (acesso -> eixo principal -> saída), sem degraus em escada
+    if (absDx >= 120 && absDy >= 120) {
+      if (absDy >= absDx) {
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.14).toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.06).toFixed(6)) });
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.86).toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.94).toFixed(6)) });
+      } else {
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.06).toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.14).toFixed(6)) });
+        quadras.push({ lat: Number((lat1 + (lat2 - lat1) * 0.94).toFixed(6)), lng: Number((lng1 + (lng2 - lng1) * 0.86).toFixed(6)) });
+      }
+    }
+  }
+
+  quadras.push({ lat: Number(lat2.toFixed(6)), lng: Number(lng2.toFixed(6)) });
+
+  // Subdivide os segmentos retos entre esquinas da malha
   const pontos = [];
+  for (let i = 0; i < quadras.length - 1; i++) {
+    const pA = quadras[i];
+    const pB = quadras[i + 1];
+    const segDist = Math.hypot((pB.lng - pA.lng) * mLngMed, (pB.lat - pA.lat) * mLatMed);
+    const subSteps = Math.max(2, Math.min(14, Math.ceil(segDist / 80)));
 
-  // Ponto intermediário de esquina de avenida (L-route com curva suave)
-  const seed = Math.abs(Math.round((lat1 * 1000 + lng1 * 1000 + lat2 * 1000 + lng2 * 1000) * 100)) % 2;
-  const cornerLat = seed === 0 ? lat1 : lat2;
-  const cornerLng = seed === 0 ? lng2 : lng1;
-
-  for (let i = 0; i <= totalSteps; i++) {
-    const t = i / totalSteps;
-    if (i === 0) {
-      pontos.push({ lat: Number(lat1.toFixed(6)), lng: Number(lng1.toFixed(6)), progresso: 0 });
-      continue;
+    for (let s = (i === 0 ? 0 : 1); s <= subSteps; s++) {
+      const u = s / subSteps;
+      pontos.push({
+        lat: Number((pA.lat + (pB.lat - pA.lat) * u).toFixed(6)),
+        lng: Number((pA.lng + (pB.lng - pA.lng) * u).toFixed(6)),
+        progresso: 0
+      });
     }
-    if (i === totalSteps) {
-      pontos.push({ lat: Number(lat2.toFixed(6)), lng: Number(lng2.toFixed(6)), progresso: 100 });
-      continue;
-    }
-
-    // Bezier quadrática ligando origem -> esquina viária -> destino (curvatura de corredor viário)
-    const u = 1 - t;
-    const tt = t * t;
-    const uu = u * u;
-    const ut2 = 2 * u * t;
-
-    const pLat = uu * lat1 + ut2 * cornerLat + tt * lat2;
-    const pLng = uu * lng1 + ut2 * cornerLng + tt * lng2;
-
-    pontos.push({
-      lat: Number(pLat.toFixed(6)),
-      lng: Number(pLng.toFixed(6)),
-      progresso: Math.round(t * 100)
-    });
   }
 
-  return suavizarCurvasEsquinas(pontos, 12, 3);
+  const comRotatorias = aplicarContornoRotatoriasNaRota(pontos);
+  const raioGiro = distTotalM >= 3500 ? 45 : 22;
+  const rotaSuave = suavizarCurvasEsquinas(comRotatorias, raioGiro, 4);
+  const n = rotaSuave.length;
+  for (let k = 0; k < n; k++) {
+    rotaSuave[k].progresso = Math.round((k / (n - 1)) * 100);
+  }
+  return rotaSuave;
 }
 
 /**
@@ -1258,6 +1553,107 @@ export function calcularTelemetriaVelocidade(opcoes = {}) {
       : (excessoVelocidade ? 'ALERTA_LIMITE_ULTRAPASSADO' : 'VELOCIDADE_SEGURA'),
     configuracaoModal: config,
     fonteGps: velocidadeGpsKmh !== null ? 'gps_dispositivo_real' : 'telemetria_calibrada_ponte'
+  };
+}
+
+/**
+ * Snap-to-Road (Map Matching Soberano): ajusta a coordenada bruta do GPS do celular
+ * na rua mais próxima da malha viária ou sobre a rota ativa, eliminando imprecisões do sensor.
+ */
+export function ajustarGpsNaMalhaViaria(lat, lng, waypointsOuVias = null, maxDistSnapM = 60) {
+  const nLat = parseFloat(lat);
+  const nLng = parseFloat(lng);
+  if (isNaN(nLat) || isNaN(nLng)) {
+    return { valido: false, erro: 'COORDENADAS_INVALIDAS' };
+  }
+
+  const cosLat = Math.cos((nLat * Math.PI) / 180);
+  const kx = 111320 * cosLat;
+  const ky = 110540;
+
+  let bestDist = Infinity;
+  let bestPoint = { lat: nLat, lng: nLng };
+  let bestHeading = null;
+  let nomeVia = null;
+
+  // 1. Se houver uma rota ativa com waypoints, tenta o snap prioritário no trajeto
+  if (Array.isArray(waypointsOuVias) && waypointsOuVias.length >= 2) {
+    for (let i = 0; i < waypointsOuVias.length - 1; i++) {
+      const a = waypointsOuVias[i];
+      const b = waypointsOuVias[i + 1];
+
+      const ax = (a.lng - nLng) * kx;
+      const ay = (a.lat - nLat) * ky;
+      const bx = (b.lng - nLng) * kx;
+      const by = (b.lat - nLat) * ky;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+
+      let t = len2 > 0 ? -(ax * dx + ay * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+
+      const cx = ax + t * dx;
+      const cy = ay + t * dy;
+      const distM = Math.hypot(cx, cy);
+
+      if (distM < bestDist) {
+        bestDist = distM;
+        bestPoint = {
+          lat: Number((nLat + cy / ky).toFixed(6)),
+          lng: Number((nLng + cx / kx).toFixed(6))
+        };
+        bestHeading = Math.round((Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360);
+        nomeVia = a.via || b.via || 'Via da Rota Ativa';
+      }
+    }
+  }
+
+  // 2. Se a distância até a rota for maior que a tolerância, busca nos corredores viários conhecidos
+  if (bestDist > maxDistSnapM) {
+    for (const corr of CORREDORES_RODOVIARIOS_BRASIL) {
+      const tr = corr.trechos;
+      for (let i = 0; i < tr.length - 1; i++) {
+        const a = tr[i];
+        const b = tr[i + 1];
+
+        const ax = (a.lng - nLng) * kx;
+        const ay = (a.lat - nLat) * ky;
+        const bx = (b.lng - nLng) * kx;
+        const by = (b.lat - nLat) * ky;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+
+        let t = len2 > 0 ? -(ax * dx + ay * dy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+
+        const cx = ax + t * dx;
+        const cy = ay + t * dy;
+        const distM = Math.hypot(cx, cy);
+
+        if (distM < bestDist) {
+          bestDist = distM;
+          bestPoint = {
+            lat: Number((nLat + cy / ky).toFixed(6)),
+            lng: Number((nLng + cx / kx).toFixed(6))
+          };
+          bestHeading = Math.round((Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360);
+          nomeVia = corr.nome;
+        }
+      }
+    }
+  }
+
+  const snapped = bestDist <= maxDistSnapM;
+  return {
+    valido: true,
+    gpsBruto: { lat: nLat, lng: nLng },
+    pontoAjustadoNaRua: snapped ? bestPoint : { lat: nLat, lng: nLng },
+    distanciaSnapMetros: Number(bestDist.toFixed(1)),
+    snapped,
+    headingViaGraus: bestHeading,
+    viaIdentificada: nomeVia || 'Via Local Mapeada'
   };
 }
 
@@ -1565,6 +1961,20 @@ export function calcularRotaCompleta(opcoes = {}) {
     : (modal === 'caminhao' ? 4.40 : 1.50);
 
   const pontesEViadutos = detectarPontesViadutosNaRota(waypoints, alturaVeiculoConsiderada);
+  const rotatoriasNaRota = detectarRotatoriasNaRota(waypoints);
+
+  if (rotatoriasNaRota.totalRotatorias > 0) {
+    const rotPrincipal = rotatoriasNaRota.rotatoriasNaRota[0];
+    instrucoes.splice(Math.max(1, instrucoes.length - 1), 0, {
+      ordem: instrucoes.length,
+      manobra: 'rotatoria',
+      icone: 'refresh-cw',
+      instrucao: rotPrincipal.instrucao,
+      distanciaTrechoKm: 0.15,
+      tempoTrechoMin: 1
+    });
+    instrucoes.forEach((p, idx) => { p.ordem = idx + 1; });
+  }
 
   // Cálculo de Rotas Alternativas para desvios viários e opções do motorista
   const rotasAlternativas = gerarRotasAlternativas(origemGeo, destinoGeo, waypoints, modal, alturaVeiculoConsiderada);
@@ -1616,6 +2026,7 @@ export function calcularRotaCompleta(opcoes = {}) {
     },
     pedagios,
     pontesEViadutos,
+    rotatoriasNaRota,
     rotasAlternativas,
     inteligenciaVeicularPlacasPro: infoPlaca,
     pagamentoPixIntegrado: cobrancaPix,

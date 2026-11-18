@@ -80,6 +80,9 @@ export class PonteMapEngine {
     this.dragMoved = false;
     this.lastX = 0;
     this.lastY = 0;
+    this.panVelX = 0;
+    this.panVelY = 0;
+    this.lastDragTime = 0;
     this.pinchDist = 0;
     this.flyAnim = null;
     this.needsRender = true;
@@ -554,6 +557,9 @@ export class PonteMapEngine {
       this.dragMoved = false;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
+      this.panVelX = 0;
+      this.panVelY = 0;
+      this.lastDragTime = performance.now();
       this.flyAnim = null;
     });
 
@@ -562,6 +568,11 @@ export class PonteMapEngine {
       const dx = e.clientX - this.lastX;
       const dy = e.clientY - this.lastY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this.dragMoved = true;
+      const now = performance.now();
+      const dt = Math.max(1, now - (this.lastDragTime || now));
+      this.panVelX = (dx / dt) * 16;
+      this.panVelY = (dy / dt) * 16;
+      this.lastDragTime = now;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       this._panBy(dx, dy);
@@ -594,6 +605,16 @@ export class PonteMapEngine {
             if (this.onMapClick) this.onMapClick(coords);
           }
         } else if (this.dragMoved) {
+          // Limita velocidade máxima de inércia para rolagem sedosa
+          const speed = Math.hypot(this.panVelX, this.panVelY);
+          if (speed > 28) {
+            const f = 28 / speed;
+            this.panVelX *= f;
+            this.panVelY *= f;
+          } else if (speed < 0.6) {
+            this.panVelX = 0;
+            this.panVelY = 0;
+          }
           this._scheduleMoveEnd();
         }
       }
@@ -632,14 +653,33 @@ export class PonteMapEngine {
       const my = e.clientY - rect.top;
       const before = this.screenToLatLng(mx, my);
 
-      const delta = e.deltaY > 0 ? -0.45 : 0.45;
+      // Rolagem suave, sedosa e proporcional (trackpad/mouse)
+      const rawDelta = e.deltaY;
+      const factor = e.deltaMode === 1 ? 0.05 : (e.deltaMode === 2 ? 0.4 : 0.0022);
+      const delta = Math.max(-0.55, Math.min(0.55, -rawDelta * factor));
       this.zoom = Math.max(4, Math.min(21.0, this.zoom + delta));
       if (this.onZoomChange) this.onZoomChange(this.zoom);
 
       const afterProj = PonteMapEngine.project(before.lat, before.lng, this.zoom);
+      const isHeadUp = this.driverMode && this.headingUp && this.currentVehicleAngle !== undefined;
+      const ax = this.width / 2;
+      const ay = isHeadUp ? this.height * 0.70 : this.height / 2;
+
+      let unX = mx;
+      let unY = my;
+      if (isHeadUp) {
+        const rot = this.currentVehicleAngle + Math.PI / 2;
+        const cos = Math.cos(rot);
+        const sin = Math.sin(rot);
+        const dx = mx - ax;
+        const dy = my - ay;
+        unX = ax + dx * cos - dy * sin;
+        unY = ay + dx * sin + dy * cos;
+      }
+
       const newCenterProj = {
-        x: afterProj.x - (mx - this.width / 2),
-        y: afterProj.y - (my - this.height / 2)
+        x: afterProj.x - (unX - ax),
+        y: afterProj.y - (unY - ay)
       };
       const newCenter = PonteMapEngine.unproject(newCenterProj.x, newCenterProj.y, this.zoom);
       this.lat = newCenter.lat;
@@ -712,6 +752,19 @@ export class PonteMapEngine {
     let lastFrame = 0;
     const tick = (now) => {
       if (this.flyAnim) this.flyAnim(now);
+
+      // Inércia e Rolagem Sedosa Contínua (Kinetic Glide)
+      if (!this.isDragging && !this.flyAnim && (Math.abs(this.panVelX) > 0.04 || Math.abs(this.panVelY) > 0.04)) {
+        this._panBy(this.panVelX, this.panVelY);
+        this.panVelX *= 0.90;
+        this.panVelY *= 0.90;
+        if (Math.abs(this.panVelX) < 0.04 && Math.abs(this.panVelY) < 0.04) {
+          this.panVelX = 0;
+          this.panVelY = 0;
+          this._scheduleMoveEnd();
+        }
+      }
+
       if (this.needsRender && now - lastFrame >= 16) {
         lastFrame = now;
         this._render();
@@ -732,7 +785,7 @@ export class PonteMapEngine {
           wood: '#dcfce7', grass: '#d1fae5', park: '#c8e6c9', cemetery: '#d3e3cd', sand: '#fef3c7',
           wetland: '#d4ebe4', hospital: '#fee2e2', school: '#fef3c7', sport: '#d1fae5', parking: '#f3f4f6'
         },
-        water: '#a8c7fa', waterLine: '#8ab4f8', aero: '#e8eaed',
+        water: '#d4e4f7', waterLine: '#7aa3d1', canalWall: '#94a3b8', aero: '#e8eaed',
         bldg: '#e9ecef', bldgStroke: '#d1d5db', bldgTop: '#f1f3f4', bldgWall: '#d1d5db', bldgShadow: 'rgba(0,0,0,0.08)',
         roads: {
           motorway: ['#e37400', '#fbbc04'], trunk: ['#f59e0b', '#fcd34d'], primary: ['#f9ab00', '#fef3c7'],
@@ -740,7 +793,8 @@ export class PonteMapEngine {
           service: ['#e5e7eb', '#ffffff'], track: ['#d1d5db', '#fbfaf7'], path: [null, '#cbd5e1'],
           raceway: ['#cbd5e1', '#ffe4e6'], busway: ['#93c5fd', '#dbeafe']
         },
-        tunnelAlpha: 0.45, bridgeCasing: '#9ca3af',
+        tunnelAlpha: 0.45, bridgeCasing: '#64748b', bridgeShadow: 'rgba(15, 23, 42, 0.22)',
+        roundaboutIsland: '#c8e6c9', roundaboutCurb: '#94a3b8',
         rail: '#94a3b8', railDash: '#ffffff',
         text: '#202124', textHalo: 'rgba(255,255,255,0.98)', textMinor: '#5f6368', hn: '#80868b',
         oneway: 'rgba(95,99,104,0.70)', placeText: '#5f6368'
@@ -753,7 +807,7 @@ export class PonteMapEngine {
         wood: '#064e3b', grass: '#065f46', park: '#047857', cemetery: '#0f2420', sand: '#1e2424',
         wetland: '#082f49', hospital: '#3b0718', school: '#2e1c12', sport: '#065f46', parking: '#1e293b'
       },
-      water: '#072a40', waterLine: '#0284c7', aero: '#1e293b',
+      water: '#0c233a', waterLine: '#255c8a', canalWall: '#334155', aero: '#1e293b',
       bldg: '#1e293b', bldgStroke: '#334155', bldgTop: '#243048', bldgWall: '#111827', bldgShadow: 'rgba(0,0,0,0.40)',
       roads: {
         motorway: ['#1d4ed8', '#2563eb'], trunk: ['#1e40af', '#3b82f6'], primary: ['#1e293b', '#475569'],
@@ -761,7 +815,8 @@ export class PonteMapEngine {
         service: ['#090e17', '#172033'], track: ['#090e17', '#292524'], path: [null, '#334155'],
         raceway: ['#090e17', '#3b0724'], busway: ['#090e17', '#1d4ed8']
       },
-      tunnelAlpha: 0.4, bridgeCasing: '#020617',
+      tunnelAlpha: 0.4, bridgeCasing: '#475569', bridgeShadow: 'rgba(0, 0, 0, 0.55)',
+      roundaboutIsland: '#064e3b', roundaboutCurb: '#475569',
       rail: '#475569', railDash: '#0f172a',
       text: '#f8fafc', textHalo: 'rgba(9,14,23,0.95)', textMinor: '#94a3b8', hn: '#64748b',
       oneway: 'rgba(148,163,184,0.60)', placeText: '#94a3b8'
@@ -776,7 +831,8 @@ export class PonteMapEngine {
         land: '#f8f9fa',
         stateBorder: '#bdc1c6',
         urban: '#f1f3f4',
-        water: '#a8c7fa',
+        water: '#d4e4f7',
+        waterLine: '#7aa3d1',
         park: '#c8e6c9',
         parkText: '#137333',
         bldgFill: '#e9ecef',
@@ -802,7 +858,8 @@ export class PonteMapEngine {
       land: '#090e17',
       stateBorder: '#334155',
       urban: '#0f172a',
-      water: '#072a40',
+      water: '#0c233a',
+      waterLine: '#255c8a',
       park: '#064e3b',
       parkText: '#34d399',
       bldgFill: '#1e293b',
@@ -1530,7 +1587,7 @@ export class PonteMapEngine {
       ground: new Map(), tunnel: new Map(), bridge: new Map(), paths: new Path2D(), rail: new Path2D(),
       traffic: [new Path2D(), new Path2D(), new Path2D()], hasTraffic: [false, false, false],
       yellowCenter: new Path2D(), whiteLanes: new Path2D(), motoFaixaAzul: new Path2D(),
-      bands: [], bldgAll: new Path2D(), oneway: [] };
+      bands: [], bldgAll: new Path2D(), oneway: [], roundabouts: [] };
 
     for (const l of tile.land) {
       let p = P.land.get(l.k);
@@ -1545,6 +1602,59 @@ export class PonteMapEngine {
     for (const r of tile.road) {
       idx++;
       if (r.sv || r.k === 'path' || r.k === 'pier') { flatPath(P.paths, r.c); continue; }
+
+      // Detecta rotatórias explícitas (r.rb) ou anéis fechados de mão única
+      let isRoundabout = Boolean(r.rb);
+      if (!isRoundabout && r.o && r.c.length >= 8) {
+        const n = r.c.length;
+        const dEnd = Math.hypot(r.c[0] - r.c[n - 2], r.c[1] - r.c[n - 1]);
+        if (dEnd < 28) {
+          let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+          for (let i = 0; i < n; i += 2) {
+            if (r.c[i] < minX) minX = r.c[i]; if (r.c[i] > maxX) maxX = r.c[i];
+            if (r.c[i + 1] < minY) minY = r.c[i + 1]; if (r.c[i + 1] > maxY) maxY = r.c[i + 1];
+          }
+          const span = Math.max(maxX - minX, maxY - minY);
+          if (span >= 16 && span <= 520) isRoundabout = true;
+        }
+      }
+
+      if (isRoundabout && r.c.length >= 6) {
+        let sx = 0; let sy = 0;
+        let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+        const ptsCount = r.c.length / 2;
+        for (let i = 0; i < r.c.length; i += 2) {
+          const px = r.c[i]; const py = r.c[i + 1];
+          sx += px; sy += py;
+          if (px < minX) minX = px; if (px > maxX) maxX = px;
+          if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+        const cx = sx / ptsCount;
+        const cy = sy / ptsCount;
+        let radSum = 0;
+        for (let i = 0; i < r.c.length; i += 2) radSum += Math.hypot(r.c[i] - cx, r.c[i + 1] - cy);
+        const rad = radSum / ptsCount;
+        if (rad >= 8 && rad <= 260) {
+          // Verifica se a rotatória cruza algum canal/rio (wway) mesmo sem tag brunnel=bridge
+          let overWater = r.b === 1;
+          if (!overWater && tile.wway && tile.wway.length) {
+            const pad = rad + 24;
+            for (const ww of tile.wway) {
+              for (let wi = 0; wi < ww.c.length; wi += 2) {
+                const wx = ww.c[wi]; const wy = ww.c[wi + 1];
+                if (wx >= minX - pad && wx <= maxX + pad && wy >= minY - pad && wy <= maxY + pad) {
+                  if (Math.hypot(wx - cx, wy - cy) <= rad + 28) { overWater = true; break; }
+                }
+              }
+              if (overWater) break;
+            }
+          }
+          const rbPath = new Path2D();
+          flatPath(rbPath, r.c);
+          P.roundabouts.push({ cx, cy, rad, b: overWater ? 1 : (r.b || 0), k: r.k, path: rbPath });
+        }
+      }
+
       const key = r.k + (r.lk ? '_l' : '');
       const target = r.b === 2 ? P.tunnel : r.b === 1 ? P.bridge : P.ground;
       let p = target.get(key);
@@ -1558,7 +1668,7 @@ export class PonteMapEngine {
       if (r.o && r.c.length >= 4) P.oneway.push(r);
 
       // Marcações Viárias de Asfalto (CONTRAN / CET-SP)
-      if (r.b !== 2 && r.c.length >= 4) {
+      if (r.b !== 2 && r.c.length >= 4 && !isRoundabout) {
         // Vias de duplo sentido: Linha amarela central divisória de mãos opostas
         if (!r.o && (r.k === 'motorway' || r.k === 'trunk' || r.k === 'primary' || r.k === 'secondary' || r.k === 'tertiary' || r.k === 'minor')) {
           flatPath(P.yellowCenter, r.c);
@@ -1703,12 +1813,30 @@ export class PonteMapEngine {
       ctx.fill(P.aero);
       ctx.fillStyle = hp.water;
       ctx.fill(P.water, 'evenodd');
-      ctx.strokeStyle = hp.water;
+      // Contorno nítido de orla, cais e divisão terra/mar
+      ctx.strokeStyle = hp.waterLine;
+      ctx.lineWidth = Math.max(0.9, 1.6 * Math.pow(2, this.zoom - 15)) / u;
+      ctx.lineJoin = 'round';
+      ctx.stroke(P.water);
+
+      // Canais e rios com mureta/margem divisória clara entre as pistas laterais
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       [1, 2.4, 5].forEach((w, i) => {
-        ctx.lineWidth = Math.max(0.8, w * Math.pow(2, this.zoom - 15)) / u;
+        const baseW = Math.max(0.8, w * Math.pow(2, this.zoom - 15));
+        if (this.zoom >= 13.5) {
+          ctx.strokeStyle = hp.canalWall;
+          ctx.lineWidth = (baseW + Math.max(1.4, baseW * 0.45)) / u;
+          ctx.stroke(P.wway[i]);
+        }
+        ctx.strokeStyle = hp.water;
+        ctx.lineWidth = baseW / u;
         ctx.stroke(P.wway[i]);
+        if (this.zoom >= 15.2 && i >= 1) {
+          ctx.strokeStyle = hp.waterLine;
+          ctx.lineWidth = Math.max(0.5, baseW * 0.22) / u;
+          ctx.stroke(P.wway[i]);
+        }
       });
       ctx.restore();
     }
@@ -1844,8 +1972,42 @@ export class PonteMapEngine {
         }
       }
 
-      // Pontes acima de tudo
-      if (P.bridge.size) strokeGroup(P.bridge, 1, this.zoom >= 15 ? hp.bridgeCasing : null);
+      // Pontes e rotatórias elevadas sobre canais/água acima de tudo
+      if (P.bridge.size) {
+        ctx.save();
+        ctx.translate(2.2 / u, 2.6 / u);
+        strokeGroup(P.bridge, 0.55, hp.bridgeShadow);
+        ctx.restore();
+        strokeGroup(P.bridge, 1, this.zoom >= 14.2 ? hp.bridgeCasing : null);
+      }
+
+      // Ilhas centrais e demarcação de rotatórias (inclusive rotatórias sobre canais)
+      if (this.zoom >= 14.6 && P.roundabouts.length) {
+        for (const rb of P.roundabouts) {
+          if (rb.b === 1) {
+            // Tabuleiro elevado da rotatória sobre canal/água
+            ctx.save();
+            ctx.strokeStyle = hp.bridgeShadow;
+            ctx.lineWidth = (this._hqRoadWidth(rb.k) + 6) / u;
+            ctx.stroke(rb.path);
+            ctx.strokeStyle = hp.bridgeCasing;
+            ctx.lineWidth = (this._hqRoadWidth(rb.k) + 3) / u;
+            ctx.stroke(rb.path);
+            ctx.strokeStyle = (hp.roads[rb.k] || hp.roads.primary)[1];
+            ctx.lineWidth = this._hqRoadWidth(rb.k) / u;
+            ctx.stroke(rb.path);
+            ctx.restore();
+          }
+          const islandR = Math.max(3 / u, rb.rad * 0.52);
+          ctx.beginPath();
+          ctx.arc(rb.cx, rb.cy, islandR, 0, Math.PI * 2);
+          ctx.fillStyle = hp.roundaboutIsland;
+          ctx.fill();
+          ctx.lineWidth = Math.max(1.0, 1.6 * Math.pow(2, this.zoom - 16)) / u;
+          ctx.strokeStyle = hp.roundaboutCurb;
+          ctx.stroke();
+        }
+      }
 
       // Setas de mão única
       if (this.zoom >= 16.5 && P.oneway.length) {
@@ -2355,7 +2517,7 @@ export class PonteMapEngine {
       ctx.fill();
     }
 
-    // Rios Reais
+    // Rios Reais com margem divisória
     if (g.rivers) {
       ctx.beginPath();
       for (const r of g.rivers) {
@@ -2364,8 +2526,11 @@ export class PonteMapEngine {
           for (const l of r.geometry.coordinates) this._drawGeoPath(ctx, l, false);
         }
       }
+      ctx.strokeStyle = pal.waterLine || pal.water;
+      ctx.lineWidth = this.zoom > 8 ? 4.0 : 2.4;
+      ctx.stroke();
       ctx.strokeStyle = pal.water;
-      ctx.lineWidth = this.zoom > 8 ? 2.8 : 1.6;
+      ctx.lineWidth = this.zoom > 8 ? 2.4 : 1.4;
       ctx.stroke();
     }
 
@@ -2424,7 +2589,7 @@ export class PonteMapEngine {
     const octx = off.getContext('2d');
     const ptTo = (pt) => [(pt[0] / 1000) * sz, (pt[1] / 1000) * sz];
 
-    // 1. Água
+    // 1. Água com contorno de orla/margem
     if (tile.water && tile.water.length) {
       octx.beginPath();
       for (const w of tile.water) {
@@ -2438,6 +2603,9 @@ export class PonteMapEngine {
       }
       octx.fillStyle = pal.water;
       octx.fill();
+      octx.strokeStyle = pal.waterLine || pal.water;
+      octx.lineWidth = 2.0;
+      octx.stroke();
     }
 
     // 2. Parques e Áreas Verdes
@@ -2706,7 +2874,7 @@ export class PonteMapEngine {
     }
     if (filtered.length < 2) return null;
 
-    // 2. Remoção de ziguezagues espúrios e desvios angulares em esquinas de grade (dogleg filter)
+    // 2. Remoção de ziguezagues espúrios e S-bends curtos (preservando curvas contínuas de rotatórias)
     const unkinked = [filtered[0]];
     for (let i = 1; i < filtered.length - 1; i++) {
       const p0 = unkinked[unkinked.length - 1];
@@ -2721,8 +2889,19 @@ export class PonteMapEngine {
       const len2 = Math.hypot(v2x, v2y);
       const dot = (v1x * v2x + v1y * v2y) / Math.max(0.01, len1 * len2);
 
-      // Desvia curvas espúrias (> 80° em trecho curto < 32m)
-      if (dot < 0.15 && (len1 < 32 || len2 < 32)) continue;
+      // Desvia curvas espúrias (> 80° em trecho curto < 32m), exceto pontos explícitos de rotatória
+      if (!p1.rotatoria && dot < 0.15 && (len1 < 32 || len2 < 32)) continue;
+
+      // Supressor de zigue-zague alternado (esquerda-direita em trechos curtos < 38m)
+      if (!p1.rotatoria && i + 2 < filtered.length && len1 < 38 && len2 < 38) {
+        const p3 = filtered[i + 2];
+        const v3x = (p3.lng - p2.lng) * mPorGrauLng;
+        const v3y = (p3.lat - p2.lat) * mPorGrauLat;
+        const cross1 = v1x * v2y - v1y * v2x;
+        const cross2 = v2x * v3y - v2y * v3x;
+        if (cross1 * cross2 < 0 && Math.hypot(v3x, v3y) < 38) continue;
+      }
+
       unkinked.push(p1);
     }
     unkinked.push(filtered[filtered.length - 1]);
@@ -2866,12 +3045,17 @@ export class PonteMapEngine {
 
     const modal = this.vehicleModal || r.modalSelecionado || 'carro';
 
-    // 0. Rotas Alternativas mais clarinhas para desvio na pista ou escolha do motorista
+    // 0. Rotas Alternativas mais clarinhas e suavizadas para desvio na pista ou escolha do motorista
     if (Array.isArray(r.rotasAlternativas) && r.rotasAlternativas.length > 0) {
       this.alternativeRouteHitBoxes = [];
       for (const alt of r.rotasAlternativas) {
         if (!alt.waypoints || alt.waypoints.length < 2) continue;
-        const altScreenPts = alt.waypoints.map((p) => this.latLngToScreen(p.lat, p.lng));
+        if (!alt._traj || alt._trajModal !== modal) {
+          alt._traj = this._buildSmoothTrajectory(alt.waypoints, modal);
+          alt._trajModal = modal;
+        }
+        const altPts = alt._traj ? alt._traj.samples : alt.waypoints;
+        const altScreenPts = altPts.map((p) => this.latLngToScreen(p.lat, p.lng));
 
         ctx.save();
         ctx.beginPath();
@@ -3334,6 +3518,59 @@ export class PonteMapEngine {
     // 7. Pontes, Viadutos, Gabarito Vertical e Avaliação Automática por Placa de Caminhão
     this._renderBridgesAndOverpasses(ctx, pal);
 
+    // 8. Rotatórias conhecidas na rota (inclusive sobre canais)
+    this._renderRouteRoundabouts(ctx, pal);
+
+    ctx.restore();
+  }
+
+  _renderRouteRoundabouts(ctx, pal) {
+    const rotInfo = this.routeData && this.routeData.rotatoriasNaRota;
+    const lista = (rotInfo && rotInfo.rotatoriasNaRota) || [];
+    if (!lista.length || this.zoom < 13.5) return;
+
+    const mpp = (156543.03392 * Math.cos((this.lat * Math.PI) / 180)) / Math.pow(2, this.zoom);
+    ctx.save();
+    for (const rot of lista) {
+      const p = this.latLngToScreen(rot.coordenadas.lat, rot.coordenadas.lng);
+      if (p.x < -60 || p.x > this.width + 60 || p.y < -60 || p.y > this.height + 60) continue;
+
+      const rPx = Math.max(10, Math.min(42, (rot.raioM || 35) / mpp));
+      if (rot.sobreCanal) {
+        // Tabuleiro elevado da rotatória sobre o canal
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rPx + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = this.theme === 'dark' ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,42,0.25)';
+        ctx.lineWidth = 8;
+        ctx.stroke();
+      }
+
+      // Ilha central da rotatória
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(5, rPx * 0.48), 0, Math.PI * 2);
+      ctx.fillStyle = this.theme === 'dark' ? '#064e3b' : '#c8e6c9';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = rot.sobreCanal ? '#38bdf8' : '#94a3b8';
+      ctx.stroke();
+
+      if (this.zoom >= 14.8) {
+        const tag = rot.sobreCanal ? `↻ Rotatória s/ ${rot.canalNome}` : `↻ ${rot.nome.split('(')[0].trim()}`;
+        ctx.font = '700 9.5px -apple-system, "Segoe UI", sans-serif';
+        const tw = ctx.measureText(tag).width;
+        ctx.fillStyle = this.theme === 'dark' ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)';
+        ctx.beginPath();
+        ctx.roundRect(p.x - tw / 2 - 7, p.y - rPx - 24, tw + 14, 18, 5);
+        ctx.fill();
+        ctx.strokeStyle = rot.sobreCanal ? '#38bdf8' : '#64748b';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.fillStyle = this.theme === 'dark' ? '#f8fafc' : '#0f172a';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(tag, p.x, p.y - rPx - 15);
+      }
+    }
     ctx.restore();
   }
 
@@ -3460,5 +3697,80 @@ export class PonteMapEngine {
     this.currentVehicleAngle = undefined;
     this.needsRender = true;
     if (this.onAlternativeRouteSelect) this.onAlternativeRouteSelect(alt);
+  }
+
+  // ── SNAP TO ROAD & TELEMETRIA GPS AO VIVO ──
+  snapGpsLocation(lat, lng, heading = null, speedKmh = null, modal = 'carro') {
+    const waypoints = this.routeData?.geometriaRota?.waypoints;
+    const nLat = parseFloat(lat);
+    const nLng = parseFloat(lng);
+    if (isNaN(nLat) || isNaN(nLng)) return null;
+
+    let targetLat = nLat;
+    let targetLng = nLng;
+    let distSnap = 0;
+    let viaNome = 'Via Local';
+
+    if (Array.isArray(waypoints) && waypoints.length >= 2) {
+      const cosLat = Math.cos((nLat * Math.PI) / 180);
+      const kx = 111320 * cosLat;
+      const ky = 110540;
+      let bestD = Infinity;
+      let bestP = null;
+
+      for (let i = 0; i < waypoints.length - 1; i++) {
+        const a = waypoints[i];
+        const b = waypoints[i + 1];
+        const ax = (a.lng - nLng) * kx;
+        const ay = (a.lat - nLat) * ky;
+        const bx = (b.lng - nLng) * kx;
+        const by = (b.lat - nLat) * ky;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 > 0 ? -(ax * dx + ay * dy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx;
+        const cy = ay + t * dy;
+        const d = Math.hypot(cx, cy);
+
+        if (d < bestD) {
+          bestD = d;
+          bestP = {
+            lat: nLat + cy / ky,
+            lng: nLng + cx / kx
+          };
+          viaNome = a.via || b.via || 'Via da Rota Ativa';
+        }
+      }
+
+      // Se o GPS do celular estiver a até 80 metros da rota, fixa a posição exatamente no asfalto da via
+      if (bestD <= 80.0 && bestP) {
+        targetLat = bestP.lat;
+        targetLng = bestP.lng;
+        distSnap = bestD;
+      }
+    }
+
+    this.gpsState = {
+      lat: Number(targetLat.toFixed(6)),
+      lng: Number(targetLng.toFixed(6)),
+      rawLat: nLat,
+      rawLng: nLng,
+      distSnapM: Number(distSnap.toFixed(1)),
+      snapped: distSnap > 0 && distSnap <= 80,
+      heading: heading !== null ? heading : this.currentVehicleAngle,
+      speedKmh: speedKmh !== null ? speedKmh : 0,
+      viaNome,
+      timestamp: Date.now()
+    };
+
+    if (this.followVehicle) {
+      this.lat += (targetLat - this.lat) * 0.35;
+      this.lng += (targetLng - this.lng) * 0.35;
+    }
+
+    this.needsRender = true;
+    return this.gpsState;
   }
 }

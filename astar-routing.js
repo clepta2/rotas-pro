@@ -114,16 +114,18 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
     return { found: false, reason: 'NO_TILES_IN_R2' };
   }
 
-  // Constrói grafo arterial conectado (grade ~55m para unir cruzamentos reais de avenidas)
+  // Constrói grafo arterial conectado (grade ~18m para preservar geometria real sem degraus em zigue-zague)
   const nodes = new Map();
   const roadLabels = [];
 
-  const getOrCreateNode = (lat, lng) => {
-    const key = `${Math.round(lat * 1800)}_${Math.round(lng * 1800)}`;
+  const getOrCreateNode = (lat, lng, isRoundabout = false) => {
+    const key = `${Math.round(lat * 6000)}_${Math.round(lng * 6000)}`;
     let node = nodes.get(key);
     if (!node) {
-      node = { id: key, lat, lng, edges: [] };
+      node = { id: key, lat, lng, rb: isRoundabout, edges: [] };
       nodes.set(key, node);
+    } else if (isRoundabout) {
+      node.rb = true;
     }
     return node;
   };
@@ -138,6 +140,7 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
       if (rd.lbl) continue;
       const weight = ROAD_SPEED_WEIGHT[rd.cls];
       if (!weight) continue;
+      const isRb = Boolean(rd.rb);
 
       for (const ring of rd.c) {
         if (ring.length < 2) continue;
@@ -146,10 +149,10 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
           const ll = normToLatLng(ring[i][0], ring[i][1], tx, ty, 14);
           if (i > 0) {
             const prevLl = normToLatLng(ring[i - 1][0], ring[i - 1][1], tx, ty, 14);
-            const steps = Math.min(5, Math.floor(Math.hypot(ll.lat - prevLl.lat, ll.lng - prevLl.lng) * 2200));
+            const steps = Math.min(8, Math.floor(Math.hypot(ll.lat - prevLl.lat, ll.lng - prevLl.lng) * 5500));
             for (let s = 1; s <= steps; s++) {
               const f = s / (steps + 1);
-              const midNode = getOrCreateNode(prevLl.lat + (ll.lat - prevLl.lat) * f, prevLl.lng + (ll.lng - prevLl.lng) * f);
+              const midNode = getOrCreateNode(prevLl.lat + (ll.lat - prevLl.lat) * f, prevLl.lng + (ll.lng - prevLl.lng) * f, isRb);
               if (prevNode && prevNode.id !== midNode.id) {
                 const segDist = Math.hypot(midNode.lat - prevNode.lat, midNode.lng - prevNode.lng) * 111.32;
                 const cost = segDist * weight;
@@ -159,7 +162,7 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
               prevNode = midNode;
             }
           }
-          const curNode = getOrCreateNode(ll.lat, ll.lng);
+          const curNode = getOrCreateNode(ll.lat, ll.lng, isRb);
           if (prevNode && prevNode.id !== curNode.id) {
             const segDist = Math.hypot(curNode.lat - prevNode.lat, curNode.lng - prevNode.lng) * 111.32;
             const cost = segDist * weight;
@@ -208,7 +211,7 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
   let iterations = 0;
   let reached = false;
 
-  while (open.size > 0 && iterations < 8000) {
+  while (open.size > 0 && iterations < 18000) {
     iterations++;
     const current = open.pop();
     if (current.id === endNode.id) {
@@ -242,7 +245,7 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
   let currId = endNode.id;
   while (currId) {
     const n = nodes.get(currId);
-    pathNodes.push({ lat: Number(n.lat.toFixed(6)), lng: Number(n.lng.toFixed(6)) });
+    pathNodes.push({ lat: Number(n.lat.toFixed(6)), lng: Number(n.lng.toFixed(6)), rotatoria: Boolean(n.rb) });
     currId = cameFrom.get(currId);
   }
   pathNodes.reverse();
@@ -280,14 +283,49 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
     }
   }
 
-  // Suaviza as esquinas e conversões e ajusta a rota para a mão direita da pista
-  const waypointsSuaves = suavizarCurvasEsquinas(rawWaypoints, 18, 4);
-
-  // Filtra espúrios/doglegs causados pela grade discreta de nós do A*
+  // Simplificação Douglas-Peucker em metros (4.5m) para eliminar degraus de grade em retas/diagonais, preservando rotatórias
   const cosLatA = Math.cos((origem.lat * Math.PI) / 180);
   const mLatA = 111320;
   const mLngA = 111320 * cosLatA;
 
+  const simplificarTrecho = (pts, tolM = 4.5) => {
+    if (pts.length <= 2) return pts;
+    const keep = new Uint8Array(pts.length);
+    keep[0] = 1;
+    keep[pts.length - 1] = 1;
+    const stack = [[0, pts.length - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop();
+      const ax = pts[a].lng * mLngA; const ay = pts[a].lat * mLatA;
+      const bx = pts[b].lng * mLngA; const by = pts[b].lat * mLatA;
+      const dx = bx - ax; const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      let maxD = -1; let idx = -1;
+      for (let i = a + 1; i < b; i++) {
+        if (pts[i].rotatoria) { keep[i] = 1; continue; }
+        const px = pts[i].lng * mLngA - ax; const py = pts[i].lat * mLatA - ay;
+        let d;
+        if (len2 === 0) d = Math.hypot(px, py);
+        else {
+          const t = Math.max(0, Math.min(1, (px * dx + py * dy) / len2));
+          d = Math.hypot(px - t * dx, py - t * dy);
+        }
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD > tolM && idx > 0) {
+        keep[idx] = 1;
+        stack.push([a, idx], [idx, b]);
+      }
+    }
+    return pts.filter((_, i) => keep[i]);
+  };
+
+  const simplificados = simplificarTrecho(rawWaypoints, 4.5);
+
+  // Suaviza as esquinas e conversões e ajusta a rota para a mão direita da pista
+  const waypointsSuaves = suavizarCurvasEsquinas(simplificados, 18, 4);
+
+  // Filtra micro-passos e zigue-zagues alternados (S-bends curtos), preservando curvas contínuas de rotatórias
   const filtrados = [waypointsSuaves[0]];
   for (let i = 1; i < waypointsSuaves.length; i++) {
     const cur = waypointsSuaves[i];
@@ -311,6 +349,17 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
     const dot = (v1x * v2x + v1y * v2y) / Math.max(0.01, len1 * len2);
 
     if (dot < 0.15 && (len1 < 30 || len2 < 30)) continue;
+
+    // Supressor de zigue-zague alternado (esquerda-direita em trechos curtos < 38m)
+    if (i + 2 < filtrados.length && len1 < 38 && len2 < 38) {
+      const p3 = filtrados[i + 2];
+      const v3x = (p3.lng - p2.lng) * mLngA;
+      const v3y = (p3.lat - p2.lat) * mLatA;
+      const cross1 = v1x * v2y - v1y * v2x;
+      const cross2 = v2x * v3y - v2y * v3x;
+      if (cross1 * cross2 < 0 && Math.hypot(v3x, v3y) < 38) continue;
+    }
+
     unkinked.push(p1);
   }
   unkinked.push(filtrados[filtrados.length - 1]);
