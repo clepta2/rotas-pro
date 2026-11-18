@@ -21,6 +21,7 @@ import {
   otimizarRotaMultiParadas,
   calcularTrackingViagemAoVivo,
   renderizarMapaRotaSvg,
+  calcularTelemetriaVelocidade,
   PRACAS_PEDAGIO_BRASIL
 } from './rotas-pro.js';
 import {
@@ -30,6 +31,7 @@ import {
   dadosLocais,
   listarPedagiosMapa,
   enriquecerRotaComSinalizacao,
+  calcularCicloSemaforico,
   SINAL_SHARD_Z
 } from './sinalizacao.js';
 
@@ -48,6 +50,9 @@ function gerarTileSinteticoLocal(z, x, y) {
 async function lerTileR2(env, z, x, y) {
   if (!env || !env.ROTAS_R2) return null;
   try {
+    // Grafo leve derivado dos tiles HQ (cobertura ampla) com fallback para os tiles legados
+    const rt = await env.ROTAS_R2.get(`rt/${z}/${x}/${y}.json`);
+    if (rt) return await rt.json();
     const obj = await env.ROTAS_R2.get(`tiles/${z}/${x}/${y}.json`);
     if (obj) return await obj.json();
   } catch (_) {}
@@ -289,6 +294,48 @@ export default {
       }
     }
 
+    // ── TILES VETORIAIS DE ALTA FIDELIDADE (HQ v2, gzip no R2 → descompressão nativa no navegador) ──
+    if (pathname === '/api/mapas/hq/index.json') {
+      let idx = { tiles: {} };
+      if (env && env.ROTAS_R2) {
+        try {
+          const obj = await env.ROTAS_R2.get('hq/index.json');
+          if (obj) idx = await obj.json();
+        } catch (_) {}
+      }
+      return new Response(JSON.stringify(idx), {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=1800' }
+      });
+    }
+
+    if (pathname.startsWith('/api/mapas/hq/') && pathname.endsWith('.json')) {
+      const parts = pathname.replace('/api/mapas/hq/', '').replace('.json', '').split('/').map((n) => parseInt(n, 10));
+      if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n >= 0)) {
+        const [z, x, y] = parts;
+        const cache = caches.default;
+        const hit = await cache.match(request);
+        if (hit) return hit;
+        if (env && env.ROTAS_R2) {
+          const obj = await env.ROTAS_R2.get(`hq/${z}/${x}/${y}.json`);
+          if (obj) {
+            const resp = new Response(obj.body, {
+              status: 200,
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json; charset=utf-8',
+                'Content-Encoding': 'gzip',
+                'Cache-Control': 'public, max-age=604800, s-maxage=2592000',
+                'X-Ponte-Tile-Source': 'R2-HQ-v2'
+              }
+            });
+            ctx.waitUntil(cache.put(request, resp.clone()));
+            return resp;
+          }
+        }
+        return new Response(null, { status: 204, headers: { ...CORS_HEADERS, 'Cache-Control': 'public, max-age=3600' } });
+      }
+    }
+
     // ── TOPOGRAFIA: GRADE DE ELEVAÇÃO 128x128 Int16 (R2, imutável → cache longo) ──
     if (pathname.startsWith('/api/mapas/terreno/') && pathname.endsWith('.bin')) {
       const parts = pathname.replace('/api/mapas/terreno/', '').replace('.bin', '').split('/').map((n) => parseInt(n, 10));
@@ -388,6 +435,53 @@ export default {
         return jsonResp({ valido: false, erro: 'Parâmetros lat e lng obrigatórios' }, 400);
       }
       return jsonResp(await dadosLocais(env, lat, lng));
+    }
+
+    // ── CICLO SEMAFÓRICO EM TEMPO REAL (TEMPO RESTANTE VERDE / AMARELO / VERMELHO) ──
+    if (pathname === '/api/mapas/semaforos/tempo') {
+      const lat = parseFloat(url.searchParams.get('lat'));
+      const lng = parseFloat(url.searchParams.get('lng'));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return jsonResp({ valido: false, erro: 'Parâmetros lat e lng obrigatórios' }, 400);
+      }
+      return jsonResp({
+        valido: true,
+        coordenadas: { lat, lng },
+        cicloSemaforico: calcularCicloSemaforico(lat, lng)
+      });
+    }
+
+    // ── TELEMETRIA DE VELOCIDADE REAL / GPS PARA MODAIS (A PÉ, BIKE, MOTO, CARRO) ──
+    if (pathname === '/api/rotas/velocidade') {
+      const lat = parseFloat(url.searchParams.get('lat'));
+      const lng = parseFloat(url.searchParams.get('lng'));
+      const modal = url.searchParams.get('modal') || 'carro';
+      const velGpsRaw = url.searchParams.get('velocidadeGps') || url.searchParams.get('speed');
+      const velGps = velGpsRaw !== null && velGpsRaw !== undefined ? parseFloat(velGpsRaw) : null;
+
+      let limiteKmh = 50;
+      let viaInfo = null;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        try {
+          const loc = await dadosLocais(env, lat, lng);
+          if (loc && loc.limiteVelocidade && loc.limiteVelocidade.kmh) {
+            limiteKmh = loc.limiteVelocidade.kmh;
+            viaInfo = loc.limiteVelocidade.via;
+          }
+        } catch (_) {}
+      }
+
+      const telemetria = calcularTelemetriaVelocidade({
+        modal,
+        limiteKmh,
+        velocidadeGps: velGps
+      });
+
+      return jsonResp({
+        ...telemetria,
+        viaNome: viaInfo,
+        coordenadas: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
+      });
     }
 
     // ── PRAÇAS DE PEDÁGIO PARA O MAPA (TABELA ANTT COM TARIFAS + PRAÇAS OSM NACIONAIS) ──

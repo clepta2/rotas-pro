@@ -5,7 +5,7 @@
  * 100% Zero Terceiros (Zero OSRM externo, Zero Google Directions).
  */
 
-import { calcularDistanciaHaversineKm } from './rotas-pro.js';
+import { calcularDistanciaHaversineKm, suavizarCurvasEsquinas, aplicarOffsetMaoDireita } from './rotas-pro.js';
 
 export function deg2num(lat, lng, z = 14) {
   const n = Math.pow(2, z);
@@ -72,7 +72,12 @@ const ROAD_SPEED_WEIGHT = {
   trunk: 0.78,
   primary: 0.85,
   secondary: 0.95,
-  tertiary: 1.05
+  tertiary: 1.05,
+  minor: 1.20,
+  service: 1.35,
+  residential: 1.20,
+  living_street: 1.30,
+  unclassified: 1.15
 };
 
 /**
@@ -275,9 +280,46 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
     }
   }
 
-  const waypoints = rawWaypoints.map((p, idx) => ({
+  // Suaviza as esquinas e conversões e ajusta a rota para a mão direita da pista
+  const waypointsSuaves = suavizarCurvasEsquinas(rawWaypoints, 18, 4);
+
+  // Filtra espúrios/doglegs causados pela grade discreta de nós do A*
+  const cosLatA = Math.cos((origem.lat * Math.PI) / 180);
+  const mLatA = 111320;
+  const mLngA = 111320 * cosLatA;
+
+  const filtrados = [waypointsSuaves[0]];
+  for (let i = 1; i < waypointsSuaves.length; i++) {
+    const cur = waypointsSuaves[i];
+    const prev = filtrados[filtrados.length - 1];
+    const d = Math.hypot((cur.lng - prev.lng) * mLngA, (cur.lat - prev.lat) * mLatA);
+    if (d >= 2.5 || i === waypointsSuaves.length - 1) filtrados.push(cur);
+  }
+
+  const unkinked = [filtrados[0]];
+  for (let i = 1; i < filtrados.length - 1; i++) {
+    const p0 = unkinked[unkinked.length - 1];
+    const p1 = filtrados[i];
+    const p2 = filtrados[i + 1];
+
+    const v1x = (p1.lng - p0.lng) * mLngA;
+    const v1y = (p1.lat - p0.lat) * mLatA;
+    const v2x = (p2.lng - p1.lng) * mLngA;
+    const v2y = (p2.lat - p1.lat) * mLatA;
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    const dot = (v1x * v2x + v1y * v2y) / Math.max(0.01, len1 * len2);
+
+    if (dot < 0.15 && (len1 < 30 || len2 < 30)) continue;
+    unkinked.push(p1);
+  }
+  unkinked.push(filtrados[filtrados.length - 1]);
+
+  const waypointsNaMao = aplicarOffsetMaoDireita(unkinked, 2.0);
+
+  const waypoints = waypointsNaMao.map((p, idx) => ({
     ...p,
-    progresso: Math.round((idx / (rawWaypoints.length - 1)) * 100)
+    progresso: Math.round((idx / (waypointsNaMao.length - 1)) * 100)
   }));
 
   return {

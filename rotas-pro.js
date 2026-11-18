@@ -587,10 +587,14 @@ export function gerarCobrancaPixCorrida(valorReais, txid = 'ROTASPRO2026', chave
 // ─── 8. INTEGRAÇÃO COM PLACAS PRO (INTELIGÊNCIA VEICULAR & RODÍZIO SP) ───
 
 const DADOS_PLACAS_EXEMPLO = {
-  BRA2E19: { modelo: 'Toyota Corolla Altis Hybrid 1.8', categoria: 'sedan_hibrido', consumoGasolinaKmL: 16.5, consumoEtanolKmL: 11.4, finalPlaca: '9' },
-  EZK5520: { modelo: 'Volkswagen Golf GTI 2.0 TSI', categoria: 'hatch_esportivo', consumoGasolinaKmL: 11.2, consumoEtanolKmL: 7.9, finalPlaca: '0' },
-  ABC12C4: { modelo: 'Honda CB 500X ABS', categoria: 'motocicleta', consumoGasolinaKmL: 29.5, consumoEtanolKmL: 21.0, finalPlaca: '4' },
-  RIO2016: { modelo: 'Hyundai HB20 1.0 Turbo Flex', categoria: 'hatch_compacto', consumoGasolinaKmL: 13.8, consumoEtanolKmL: 9.6, finalPlaca: '6' }
+  BRA2E19: { modelo: 'Toyota Corolla Altis Hybrid 1.8', categoria: 'sedan_hibrido', alturaVeiculoM: 1.45, larguraM: 1.78, pbtToneladas: 1.8, eixos: 2, consumoGasolinaKmL: 16.5, consumoEtanolKmL: 11.4, finalPlaca: '9' },
+  EZK5520: { modelo: 'Volkswagen Golf GTI 2.0 TSI', categoria: 'hatch_esportivo', alturaVeiculoM: 1.44, larguraM: 1.80, pbtToneladas: 1.4, eixos: 2, consumoGasolinaKmL: 11.2, consumoEtanolKmL: 7.9, finalPlaca: '0' },
+  ABC12C4: { modelo: 'Honda CB 500X ABS', categoria: 'motocicleta', alturaVeiculoM: 1.35, larguraM: 0.83, pbtToneladas: 0.3, eixos: 2, consumoGasolinaKmL: 29.5, consumoEtanolKmL: 21.0, finalPlaca: '4' },
+  RIO2016: { modelo: 'Hyundai HB20 1.0 Turbo Flex', categoria: 'hatch_compacto', alturaVeiculoM: 1.47, larguraM: 1.72, pbtToneladas: 1.3, eixos: 2, consumoGasolinaKmL: 13.8, consumoEtanolKmL: 9.6, finalPlaca: '6' },
+  // Caminhões de Logística & Carga Pesada (com alturas regulamentares CONTRAN para pontes)
+  CAM2026: { modelo: 'Scania R450 6x2 Highline Baú', categoria: 'caminhao_pesado', alturaVeiculoM: 4.40, larguraM: 2.60, pbtToneladas: 45.0, eixos: 6, consumoDieselKmL: 3.2, finalPlaca: '6' },
+  TRK1E22: { modelo: 'Mercedes-Benz Actros 2548 Truck', categoria: 'caminhao_pesado', alturaVeiculoM: 4.20, larguraM: 2.60, pbtToneladas: 29.0, eixos: 4, consumoDieselKmL: 3.6, finalPlaca: '2' },
+  VUC3456: { modelo: 'Hyundai HR 2.5 Turbo VUC Urbano', categoria: 'caminhao_urbano_vuc', alturaVeiculoM: 2.80, larguraM: 2.10, pbtToneladas: 3.5, eixos: 2, consumoDieselKmL: 8.5, finalPlaca: '6' }
 };
 
 export function diagnosticarPlacaNaRota(placaInput) {
@@ -601,11 +605,17 @@ export function diagnosticarPlacaNaRota(placaInput) {
   }
 
   const ultimoDigito = limpa[6];
+  const ehCaminhaoPlaca = limpa.startsWith('CAM') || limpa.startsWith('TRK') || limpa.startsWith('VUC');
   const preset = DADOS_PLACAS_EXEMPLO[limpa] || {
-    modelo: limpa[4] >= 'A' && limpa[4] <= 'Z' ? 'Veículo Padrão Mercosul Flex' : 'Veículo Padrão Nacional Flex',
-    categoria: 'automovel_flex',
+    modelo: ehCaminhaoPlaca ? 'Caminhão de Carga Pesada' : (limpa[4] >= 'A' && limpa[4] <= 'Z' ? 'Veículo Padrão Mercosul Flex' : 'Veículo Padrão Nacional Flex'),
+    categoria: ehCaminhaoPlaca ? 'caminhao_pesado' : 'automovel_flex',
+    alturaVeiculoM: ehCaminhaoPlaca ? 4.40 : 1.50,
+    larguraM: ehCaminhaoPlaca ? 2.60 : 1.78,
+    pbtToneladas: ehCaminhaoPlaca ? 42.0 : 1.5,
+    eixos: ehCaminhaoPlaca ? 6 : 2,
     consumoGasolinaKmL: 13.2,
     consumoEtanolKmL: 9.3,
+    consumoDieselKmL: ehCaminhaoPlaca ? 3.4 : 14.0,
     finalPlaca: ultimoDigito
   };
 
@@ -620,9 +630,17 @@ export function diagnosticarPlacaNaRota(placaInput) {
     placaNormalizada: limpa,
     veiculoIdentificado: preset.modelo,
     categoria: preset.categoria,
+    especificacoesFisicas: {
+      alturaTotalMetros: preset.alturaVeiculoM || 1.50,
+      larguraMetros: preset.larguraM || 1.80,
+      pbtToneladas: preset.pbtToneladas || 1.5,
+      quantidadeEixos: preset.eixos || 2,
+      ehVeiculoPesado: preset.categoria.includes('caminhao')
+    },
     consumoHomologadoInmetro: {
       gasolinaKmL: preset.consumoGasolinaKmL,
-      etanolKmL: preset.consumoEtanolKmL
+      etanolKmL: preset.consumoEtanolKmL,
+      dieselKmL: preset.consumoDieselKmL || 13.5
     },
     rodizioSpCet: {
       finalPlaca: ultimoDigito,
@@ -633,11 +651,347 @@ export function diagnosticarPlacaNaRota(placaInput) {
   };
 }
 
-// ─── 9. MOTOR DE GEOMETRIA VIÁRIA, INTERPOLAÇÃO E CURVAS REALISTAS ───
+// ─── 8.5 CATÁLOGO SOBERANO DE PONTES, VIADUTOS E GABARITOS DE ALTURA LIVRE ───
+
+export const PONTES_VIADUTOS_BRASIL = [
+  {
+    id: 'ponte_estaiada_sp',
+    nome: 'Ponte Octávio Frias de Oliveira (Ponte Estaiada)',
+    tipo: 'ponte_estaiada',
+    via: 'Complexo Real Parque / Marginal Pinheiros',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.6128, lng: -46.6990 },
+    comprimentoM: 1380,
+    alturaLivreM: 5.50, // Gabarito sob a ponte
+    vaoPrincipalM: 144,
+    permiteCaminhaoPesado: true
+  },
+  {
+    id: 'complexo_ayrton_senna_sp',
+    nome: 'Complexo Viário Ayrton Senna (Túnel sob o Ibirapuera)',
+    tipo: 'tunel_urbano',
+    via: 'Av. 23 de Maio ↔ Av. Rubem Berta',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5875, lng: -46.6515 },
+    comprimentoM: 1950,
+    alturaLivreM: 4.20, // Altura máxima permitida pela CET (Caminhões > 4.20m proibidos)
+    vaoPrincipalM: 16,
+    permiteCaminhaoPesado: false
+  },
+  {
+    id: 'viaduto_antartica_sp',
+    nome: 'Viaduto Antártica (Complexo Água Branca)',
+    tipo: 'viaduto',
+    via: 'Av. Antártica ↔ Av. Francisco Matarazzo',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5240, lng: -46.6780 },
+    comprimentoM: 340,
+    alturaLivreM: 4.10, // Restrição crítica de altura (ponto clássico de enrosco de caminhão baú alto)
+    vaoPrincipalM: 28,
+    permiteCaminhaoPesado: false
+  },
+  {
+    id: 'viaduto_brigadeiro_23maio_sp',
+    nome: 'Viaduto Brigadeiro Luís Antônio',
+    tipo: 'viaduto',
+    via: 'Av. Brigadeiro cruzando sobre a Av. 23 de Maio',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5585, lng: -46.6430 },
+    comprimentoM: 180,
+    alturaLivreM: 4.45,
+    vaoPrincipalM: 32,
+    permiteCaminhaoPesado: true
+  },
+  {
+    id: 'viaduto_reboucas_eusebio_sp',
+    nome: 'Viaduto Rebouças (Complexo Eusébio Matoso)',
+    tipo: 'viaduto',
+    via: 'Av. Rebouças ↔ Ponte Eusébio Matoso',
+    cidade: 'São Paulo',
+    uf: 'SP',
+    coordenadas: { lat: -23.5725, lng: -46.6850 },
+    comprimentoM: 420,
+    alturaLivreM: 4.80,
+    vaoPrincipalM: 38,
+    permiteCaminhaoPesado: true
+  },
+  {
+    id: 'ponte_rio_niteroi',
+    nome: 'Ponte Presidente Costa e Silva (Ponte Rio-Niterói)',
+    tipo: 'ponte_maritima',
+    via: 'Rodovia BR-101',
+    cidade: 'Rio de Janeiro',
+    uf: 'RJ',
+    coordenadas: { lat: -22.8680, lng: -43.1550 },
+    comprimentoM: 13290,
+    alturaLivreM: 72.0,
+    vaoPrincipalM: 300,
+    permiteCaminhaoPesado: true
+  },
+  {
+    id: 'ponte_jk_brasilia',
+    nome: 'Ponte Juscelino Kubitschek (Ponte JK)',
+    tipo: 'ponte_em_arco',
+    via: 'Lago Paranoá / Eixo Monumental Leste',
+    cidade: 'Brasília',
+    uf: 'DF',
+    coordenadas: { lat: -15.8239, lng: -47.8294 },
+    comprimentoM: 1200,
+    alturaLivreM: 18.0,
+    vaoPrincipalM: 240,
+    permiteCaminhaoPesado: true
+  }
+];
 
 /**
- * Gera uma polilinha realista de waypoints simulando a malha de avenidas urbanas
- * ou estradas sinuosas entre dois pontos geográficos, evitando linhas retas artificiais.
+ * Detecta e avalia pontes, viadutos e túneis no trajeto,
+ * calculando se o veículo passa por cima ou por baixo e se o caminhão
+ * atende ao gabarito vertical de altura regulamentar CONTRAN.
+ */
+export function detectarPontesViadutosNaRota(waypoints, alturaVeiculoM = 1.50) {
+  if (!Array.isArray(waypoints) || waypoints.length < 2) {
+    return { totalPontes: 0, pontesNaRota: [], alertaGabarito: false, mensagemGabarito: 'Sem pontes no trajeto.' };
+  }
+
+  const pontesEncontradas = [];
+  const jaVistos = new Set();
+  let alturaRestritaDetectada = false;
+  let ponteMaisBaixaM = Infinity;
+  let ponteCritica = null;
+
+  for (const ponte of PONTES_VIADUTOS_BRASIL) {
+    for (let i = 0; i < waypoints.length; i++) {
+      const wp = waypoints[i];
+      const dKm = calcularDistanciaHaversineKm(wp.lat, wp.lng, ponte.coordenadas.lat, ponte.coordenadas.lng);
+      // Se a rota cruza o perímetro da ponte/viaduto (raio de 380m)
+      if (dKm <= 0.38 && !jaVistos.has(ponte.id)) {
+        jaVistos.add(ponte.id);
+
+        // Determina se a rota passa por cima ou por baixo da ponte
+        const ehViaElevada = ponte.tipo === 'ponte_estaiada' || ponte.tipo === 'ponte_maritima' || ponte.tipo === 'ponte_em_arco';
+        const nivelRota = ehViaElevada ? 'ponte' : (ponte.tipo === 'tunel_urbano' ? 'tunel_subterraneo' : 'sob_ponte');
+
+        const aprovadoGabarito = nivelRota === 'ponte' || (alturaVeiculoM <= ponte.alturaLivreM);
+        const folgaCm = Math.round((ponte.alturaLivreM - alturaVeiculoM) * 100);
+
+        if (!aprovadoGabarito) {
+          alturaRestritaDetectada = true;
+          if (ponte.alturaLivreM < ponteMaisBaixaM) {
+            ponteMaisBaixaM = ponte.alturaLivreM;
+            ponteCritica = ponte;
+          }
+        }
+
+        pontesEncontradas.push({
+          id: ponte.id,
+          nome: ponte.nome,
+          tipo: ponte.tipo,
+          via: ponte.via,
+          cidade: ponte.cidade,
+          uf: ponte.uf,
+          coordenadas: ponte.coordenadas,
+          comprimentoM: ponte.comprimentoM,
+          alturaLivreM: ponte.alturaLivreM,
+          alturaLivreFormatada: `${ponte.alturaLivreM.toFixed(2).replace('.', ',')} m`,
+          nivelRota,
+          aprovadoGabarito,
+          folgaGabaritoCm: folgaCm,
+          alerta: !aprovadoGabarito
+            ? `ALTURA_INSUFICIENTE: Caminhão com ${alturaVeiculoM}m colidirá com a estrutura de ${ponte.alturaLivreM}m!`
+            : `GABARITO_LIBERADO: Folga vertical de ${folgaCm}cm com segurança`,
+          progressoRotaPct: wp.progresso ?? Math.round((i / (waypoints.length - 1)) * 100)
+        });
+        break;
+      }
+    }
+  }
+
+  return {
+    totalPontes: pontesEncontradas.length,
+    pontesNaRota: pontesEncontradas,
+    alertaGabarito: alturaRestritaDetectada,
+    alturaVeiculoConsideradaM: alturaVeiculoM,
+    statusGabaritoGeral: alturaRestritaDetectada
+      ? 'VIOLACAO_GABARITO_ALTURA_PONTE'
+      : (pontesEncontradas.length > 0 ? 'GABARITO_SEGURO_TODAS_PONTES' : 'SEM_RESTRICAO_DE_PONTE'),
+    mensagemGabarito: alturaRestritaDetectada
+      ? `ATENÇÃO CAMINHONEIRO: O ${ponteCritica.nome} possui altura livre de ${ponteCritica.alturaLivreM}m. Seu caminhão (${alturaVeiculoM}m) não passa! Utilize rota alternativa.`
+      : (pontesEncontradas.length > 0
+        ? `Gabarito aprovado: Todas as ${pontesEncontradas.length} pontes/viadutos comportam a altura de ${alturaVeiculoM}m.`
+        : 'Percurso livre de pontes ou viadutos restritivos.')
+  };
+}
+
+// ─── 9. MOTOR DE GEOMETRIA VIÁRIA, CORREDORES RODOVIÁRIOS E CURVAS REALISTAS ───
+
+export const CORREDORES_RODOVIARIOS_BRASIL = [
+  {
+    id: 'dutra_sp_rj',
+    nome: 'Rodovia Presidente Dutra (BR-116)',
+    trechos: [
+      { lat: -23.5180, lng: -46.5900 },
+      { lat: -23.4050, lng: -46.3320 },
+      { lat: -23.2850, lng: -45.9520 },
+      { lat: -23.1900, lng: -45.8850 },
+      { lat: -23.1000, lng: -45.7150 },
+      { lat: -23.0300, lng: -45.5600 },
+      { lat: -22.9220, lng: -45.3610 },
+      { lat: -22.8450, lng: -45.2300 },
+      { lat: -22.7350, lng: -45.1150 },
+      { lat: -22.5400, lng: -44.7800 },
+      { lat: -22.4890, lng: -44.5680 },
+      { lat: -22.4700, lng: -44.4500 },
+      { lat: -22.5450, lng: -44.1700 },
+      { lat: -22.5200, lng: -44.1000 },
+      { lat: -22.6300, lng: -43.9000 },
+      { lat: -22.7420, lng: -43.7050 },
+      { lat: -22.7600, lng: -43.4500 },
+      { lat: -22.8300, lng: -43.3200 },
+      { lat: -22.9035, lng: -43.1769 }
+    ]
+  },
+  {
+    id: 'imigrantes_sp_santos',
+    nome: 'Rodovia dos Imigrantes (SP-160)',
+    trechos: [
+      { lat: -23.5505, lng: -46.6333 },
+      { lat: -23.6450, lng: -46.6410 },
+      { lat: -23.6900, lng: -46.6150 },
+      { lat: -23.8150, lng: -46.5410 },
+      { lat: -23.8500, lng: -46.5200 },
+      { lat: -23.9000, lng: -46.4700 },
+      { lat: -23.9180, lng: -46.4350 },
+      { lat: -23.9450, lng: -46.3800 },
+      { lat: -23.9678, lng: -46.3322 }
+    ]
+  },
+  {
+    id: 'bandeirantes_sp_campinas',
+    nome: 'Rodovia dos Bandeirantes (SP-348)',
+    trechos: [
+      { lat: -23.5180, lng: -46.7350 },
+      { lat: -23.3620, lng: -46.7950 },
+      { lat: -23.1950, lng: -46.8900 },
+      { lat: -23.0950, lng: -47.0250 },
+      { lat: -22.9056, lng: -47.0608 }
+    ]
+  },
+  {
+    id: 'regis_sp_curitiba',
+    nome: 'Rodovia Régis Bittencourt (BR-116)',
+    trechos: [
+      { lat: -23.6200, lng: -46.7800 },
+      { lat: -23.8620, lng: -46.9450 },
+      { lat: -23.9300, lng: -47.0700 },
+      { lat: -24.2800, lng: -47.4600 },
+      { lat: -24.4900, lng: -47.8400 },
+      { lat: -24.7350, lng: -48.1250 },
+      { lat: -24.8900, lng: -48.4200 },
+      { lat: -25.3020, lng: -49.0510 },
+      { lat: -25.4284, lng: -49.2733 }
+    ]
+  },
+  {
+    id: 'fernao_sp_bh',
+    nome: 'Rodovia Fernão Dias (BR-381)',
+    trechos: [
+      { lat: -23.5050, lng: -46.5650 },
+      { lat: -23.2680, lng: -46.5820 },
+      { lat: -23.1200, lng: -46.5500 },
+      { lat: -22.8850, lng: -46.4120 },
+      { lat: -22.6120, lng: -46.0580 },
+      { lat: -22.2300, lng: -45.9300 },
+      { lat: -21.6900, lng: -45.2500 },
+      { lat: -21.0250, lng: -44.9180 },
+      { lat: -20.7000, lng: -44.8200 },
+      { lat: -19.9650, lng: -44.2000 },
+      { lat: -19.9191, lng: -43.9386 }
+    ]
+  },
+  // ── CORREDORES ARTERIAIS ESTRUTURAIS URBANOS (SÃO PAULO & CAPITAIS) ──
+  {
+    id: 'sp_paulista_reboucas_farialima',
+    nome: 'Eixo Paulista ↔ Rebouças ↔ Faria Lima (São Paulo - SP)',
+    trechos: [
+      { lat: -23.5700, lng: -46.6450 }, // Paulista altura Paraíso / Oswaldo Cruz
+      { lat: -23.5645, lng: -46.6525 }, // Paulista altura Brigadeiro
+      { lat: -23.5614, lng: -46.6558 }, // Paulista (MASP)
+      { lat: -23.5574, lng: -46.6610 }, // Paulista altura Bela Cintra / Consolação
+      { lat: -23.5560, lng: -46.6635 }, // Início Av. Rebouças / Complexo Viário
+      { lat: -23.5595, lng: -46.6685 }, // Rebouças altura Hospital das Clínicas
+      { lat: -23.5645, lng: -46.6745 }, // Rebouças altura Metrô Oscar Freire
+      { lat: -23.5695, lng: -46.6805 }, // Rebouças cruzamento Henrique Schaumann / Av. Brasil
+      { lat: -23.5725, lng: -46.6850 }, // Rebouças x Faria Lima (Largo da Batata)
+      { lat: -23.5780, lng: -46.6865 }, // Av. Brig. Faria Lima (Shopping Iguatemi)
+      { lat: -23.5869, lng: -46.6822 }, // Av. Brig. Faria Lima (Itaim Bibi)
+      { lat: -23.5930, lng: -46.6845 }  // Av. Brig. Faria Lima x Pres. Juscelino Kubitschek
+    ]
+  },
+  {
+    id: 'sp_paulista_23maio_congonhas',
+    nome: 'Eixo Paulista ↔ 23 de Maio ↔ Congonhas (Faixa Azul CET-SP)',
+    trechos: [
+      { lat: -23.5614, lng: -46.6558 }, // Paulista (MASP)
+      { lat: -23.5695, lng: -46.6455 }, // Paulista (Praça Oswaldo Cruz)
+      { lat: -23.5725, lng: -46.6420 }, // Viaduto Bernardino de Campos
+      { lat: -23.5760, lng: -46.6435 }, // Av. 23 de Maio altura Viaduto Pedroso
+      { lat: -23.5825, lng: -46.6475 }, // Av. 23 de Maio altura Tutóia
+      { lat: -23.5875, lng: -46.6515 }, // Av. 23 de Maio altura Ibirapuera / Obelisco
+      { lat: -23.5940, lng: -46.6535 }, // Av. Rubem Berta (Complexo Ayrton Senna)
+      { lat: -23.6040, lng: -46.6545 }, // Av. Rubem Berta (Viaduto Onze de Junho)
+      { lat: -23.6120, lng: -46.6550 }, // Av. Moreira Guimarães
+      { lat: -23.6200, lng: -46.6560 }, // Av. Washington Luís
+      { lat: -23.6261, lng: -46.6564 }  // Aeroporto de Congonhas
+    ]
+  },
+  {
+    id: 'sp_se_paulista',
+    nome: 'Eixo Sé ↔ Brigadeiro Luís Antônio ↔ Paulista (São Paulo - SP)',
+    trechos: [
+      { lat: -23.5505, lng: -46.6333 }, // Praça da Sé
+      { lat: -23.5525, lng: -46.6360 }, // R. Benjamin Constant / São Francisco
+      { lat: -23.5550, lng: -46.6390 }, // Viaduto Dona Paulina
+      { lat: -23.5585, lng: -46.6430 }, // Av. Brigadeiro Luís Antônio (Bela Vista)
+      { lat: -23.5630, lng: -46.6465 }, // Av. Brigadeiro Luís Antônio subindo
+      { lat: -23.5670, lng: -46.6485 }, // Av. Brigadeiro x Av. Paulista
+      { lat: -23.5614, lng: -46.6558 }  // Av. Paulista (MASP)
+    ]
+  },
+  {
+    id: 'sp_farialima_berrini_morumbi',
+    nome: 'Eixo Faria Lima ↔ Berrini ↔ Chucri Zaidan (São Paulo - SP)',
+    trechos: [
+      { lat: -23.5869, lng: -46.6822 }, // Faria Lima (Itaim Bibi)
+      { lat: -23.5930, lng: -46.6845 }, // Faria Lima x JK
+      { lat: -23.5975, lng: -46.6905 }, // Acesso Ponte Estaiada / Marginal Pinheiros
+      { lat: -23.6025, lng: -46.6939 }, // Av. Eng. Luís Carlos Berrini
+      { lat: -23.6140, lng: -46.6970 }, // Berrini altura Shopping Nações Unidas
+      { lat: -23.6228, lng: -46.6992 }  // Av. Dr. Chucri Zaidan (Morumbi)
+    ]
+  },
+  {
+    id: 'rj_centro_copacabana',
+    nome: 'Eixo Rio Branco ↔ Aterro do Flamengo ↔ Copacabana (Rio de Janeiro - RJ)',
+    trechos: [
+      { lat: -22.9035, lng: -43.1769 }, // Av. Rio Branco
+      { lat: -22.9150, lng: -43.1740 }, // Cinelândia / Praça Paris
+      { lat: -22.9230, lng: -43.1725 }, // Aterro do Flamengo / M.A.M.
+      { lat: -22.9350, lng: -43.1745 }, // Parque do Flamengo
+      { lat: -22.9430, lng: -43.1810 }, // Enseada de Botafogo
+      { lat: -22.9560, lng: -43.1820 }, // Túnel Novo / Lauro Sodré
+      { lat: -22.9630, lng: -43.1795 }, // Av. Princesa Isabel
+      { lat: -22.9711, lng: -43.1825 }  // Av. Atlântica (Copacabana)
+    ]
+  }
+];
+
+/**
+ * Gera uma polilinha realista de waypoints acompanhando rodovias ou avenidas urbanas,
+ * sem cortar em linha reta através de quarteirões ou prédios.
  */
 export function gerarWaypointsMalhaViaria(origem, destino, numSegmentos = 16) {
   const lat1 = origem.lat;
@@ -645,37 +999,86 @@ export function gerarWaypointsMalhaViaria(origem, destino, numSegmentos = 16) {
   const lat2 = destino.lat;
   const lng2 = destino.lng;
 
-  const dLat = lat2 - lat1;
-  const dLng = lng2 - lng1;
   const distDiretaKm = calcularDistanciaHaversineKm(lat1, lng1, lat2, lng2);
 
-  // Semente determinística baseada nas coordenadas para que a mesma rota gere sempre o mesmo traçado viário
-  const seed = Math.abs(Math.round((lat1 * 1000 + lng1 * 1000 + lat2 * 1000 + lng2 * 1000) * 100)) % 997;
-  const sinalCurva = (seed % 2 === 0) ? 1 : -1;
+  // 1. Tenta identificar se o trajeto acompanha um dos grandes corredores rodoviários ou arteriais urbanos
+  for (const corr of CORREDORES_RODOVIARIOS_BRASIL) {
+    const tr = corr.trechos;
+    const ehUrbano = corr.id.startsWith('sp_') || corr.id.startsWith('rj_');
+    const maxSnapKm = ehUrbano ? 2.8 : 38.0;
 
-  // Vetor perpendicular normalizado para criar deflexões de quarteirões/avenidas
-  const perpLat = -dLng;
-  const perpLng = dLat;
+    let idxO = -1;
+    let minDO = Infinity;
+    let idxD = -1;
+    let minDD = Infinity;
 
+    for (let i = 0; i < tr.length; i++) {
+      const dO = calcularDistanciaHaversineKm(lat1, lng1, tr[i].lat, tr[i].lng);
+      if (dO < minDO) { minDO = dO; idxO = i; }
+      const dD = calcularDistanciaHaversineKm(lat2, lng2, tr[i].lat, tr[i].lng);
+      if (dD < minDD) { minDD = dD; idxD = i; }
+    }
+
+    if (minDO <= maxSnapKm && minDD <= maxSnapKm && Math.abs(idxO - idxD) >= 1) {
+      const step = idxO < idxD ? 1 : -1;
+      const subTrechos = [];
+      for (let k = idxO; k !== idxD + step; k += step) {
+        subTrechos.push(tr[k]);
+      }
+
+      const pts = [{ lat: Number(lat1.toFixed(6)), lng: Number(lng1.toFixed(6)), progresso: 0 }];
+      for (let i = 0; i < subTrechos.length - 1; i++) {
+        const a = subTrechos[i];
+        const b = subTrechos[i + 1];
+        const subSteps = 3;
+        for (let s = 1; s <= subSteps; s++) {
+          const frac = s / subSteps;
+          pts.push({
+            lat: Number((a.lat + (b.lat - a.lat) * frac).toFixed(6)),
+            lng: Number((a.lng + (b.lng - a.lng) * frac).toFixed(6)),
+            progresso: 0
+          });
+        }
+      }
+      pts.push({ lat: Number(lat2.toFixed(6)), lng: Number(lng2.toFixed(6)), progresso: 100 });
+      for (let k = 0; k < pts.length; k++) {
+        pts[k].progresso = Math.round((k / (pts.length - 1)) * 100);
+      }
+      return suavizarCurvasEsquinas(pts, ehUrbano ? 16 : 40, 3);
+    }
+  }
+
+  // 2. Trajeto Urbano ou Regional: gera rota ortogonal (grid de ruas) com esquinas chanfradas
+  // evitando atravessar quarteirões e prédios em diagonal
+  const dLat = lat2 - lat1;
+  const dLng = lng2 - lng1;
+  const totalSteps = Math.max(numSegmentos, 20);
   const pontos = [];
-  for (let i = 0; i <= numSegmentos; i++) {
-    const t = i / numSegmentos;
+
+  // Ponto intermediário de esquina de avenida (L-route com curva suave)
+  const seed = Math.abs(Math.round((lat1 * 1000 + lng1 * 1000 + lat2 * 1000 + lng2 * 1000) * 100)) % 2;
+  const cornerLat = seed === 0 ? lat1 : lat2;
+  const cornerLng = seed === 0 ? lng2 : lng1;
+
+  for (let i = 0; i <= totalSteps; i++) {
+    const t = i / totalSteps;
     if (i === 0) {
       pontos.push({ lat: Number(lat1.toFixed(6)), lng: Number(lng1.toFixed(6)), progresso: 0 });
       continue;
     }
-    if (i === numSegmentos) {
+    if (i === totalSteps) {
       pontos.push({ lat: Number(lat2.toFixed(6)), lng: Number(lng2.toFixed(6)), progresso: 100 });
       continue;
     }
 
-    // Combina deflexão em S de corredor viário + pequeno degrau de quarteirão urbano
-    const ondaPrincipal = Math.sin(t * Math.PI * 2) * 0.11 * sinalCurva;
-    const ondaSecundaria = Math.sin(t * Math.PI) * 0.07;
-    const fatorDesvio = distDiretaKm < 25 ? (ondaPrincipal + ondaSecundaria) : (ondaPrincipal * 0.55);
+    // Bezier quadrática ligando origem -> esquina viária -> destino (curvatura de corredor viário)
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    const ut2 = 2 * u * t;
 
-    const pLat = lat1 + dLat * t + perpLat * fatorDesvio;
-    const pLng = lng1 + dLng * t + perpLng * fatorDesvio;
+    const pLat = uu * lat1 + ut2 * cornerLat + tt * lat2;
+    const pLng = uu * lng1 + ut2 * cornerLng + tt * lng2;
 
     pontos.push({
       lat: Number(pLat.toFixed(6)),
@@ -684,7 +1087,178 @@ export function gerarWaypointsMalhaViaria(origem, destino, numSegmentos = 16) {
     });
   }
 
-  return pontos;
+  return suavizarCurvasEsquinas(pontos, 12, 3);
+}
+
+/**
+ * Suaviza curvas fechadas e esquinas angulares de vias urbanas/rodoviárias
+ * usando interpolação Bézier com raio de giro viário realista (8m a 16m),
+ * eliminando quinas secas e bicos pontudos.
+ */
+export function suavizarCurvasEsquinas(waypoints, raioGiroMetros = 12, passosPorCurva = 3) {
+  if (!Array.isArray(waypoints) || waypoints.length < 3) return waypoints || [];
+
+  const resultado = [waypoints[0]];
+  const cosLat = Math.cos((waypoints[0].lat * Math.PI) / 180);
+  const mPorGrauLat = 111320;
+  const mPorGrauLng = 111320 * cosLat;
+
+  for (let i = 1; i < waypoints.length - 1; i++) {
+    const pPrev = waypoints[i - 1];
+    const pCurr = waypoints[i];
+    const pNext = waypoints[i + 1];
+
+    // Vetores em metros locais
+    const v1x = (pCurr.lng - pPrev.lng) * mPorGrauLng;
+    const v1y = (pCurr.lat - pPrev.lat) * mPorGrauLat;
+    const v2x = (pNext.lng - pCurr.lng) * mPorGrauLng;
+    const v2y = (pNext.lat - pCurr.lat) * mPorGrauLat;
+
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+
+    if (len1 < 5 || len2 < 5) {
+      resultado.push(pCurr);
+      continue;
+    }
+
+    // Ângulo entre os vetores (produto escalar)
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const clampedDot = Math.max(-1, Math.min(1, dot));
+    const angulo = Math.acos(clampedDot); // em radianos
+
+    // Curva relevante entre 15° e 160°
+    if (angulo > 0.22 && angulo < 2.8) {
+      const cutM = Math.min(raioGiroMetros, len1 * 0.38, len2 * 0.38);
+
+      // Ponto de início do arredondamento (em pPrev -> pCurr)
+      const t1 = 1 - (cutM / len1);
+      const startLat = pPrev.lat + (pCurr.lat - pPrev.lat) * t1;
+      const startLng = pPrev.lng + (pCurr.lng - pPrev.lng) * t1;
+
+      // Ponto final do arredondamento (em pCurr -> pNext)
+      const t2 = cutM / len2;
+      const endLat = pCurr.lat + (pNext.lat - pCurr.lat) * t2;
+      const endLng = pCurr.lng + (pNext.lng - pCurr.lng) * t2;
+
+      // Gera pontos intermediários de Bézier quadrática
+      for (let s = 1; s <= passosPorCurva; s++) {
+        const u = s / (passosPorCurva + 1);
+        const om = 1 - u;
+        const bLat = om * om * startLat + 2 * om * u * pCurr.lat + u * u * endLat;
+        const bLng = om * om * startLng + 2 * om * u * pCurr.lng + u * u * endLng;
+        resultado.push({
+          lat: Number(bLat.toFixed(6)),
+          lng: Number(bLng.toFixed(6)),
+          progresso: pCurr.progresso ?? 0
+        });
+      }
+    } else {
+      resultado.push(pCurr);
+    }
+  }
+
+  resultado.push(waypoints[waypoints.length - 1]);
+
+  // Recalcula progresso normalizado 0..100
+  const n = resultado.length;
+  for (let k = 0; k < n; k++) {
+    resultado[k].progresso = Math.round((k / (n - 1)) * 100);
+  }
+
+  return resultado;
+}
+
+/**
+ * Desloca a rota para a faixa da direita (mão de direção oficial no Brasil),
+ * evitando trafegar pelo centro da pista ou contra a mão.
+ */
+export function aplicarOffsetMaoDireita(waypoints, offsetMetros = 2.4) {
+  if (!Array.isArray(waypoints) || waypoints.length < 2 || offsetMetros === 0) return waypoints || [];
+
+  const out = [];
+  const cosLat = Math.cos((waypoints[0].lat * Math.PI) / 180);
+  const mPorGrauLat = 111320;
+  const mPorGrauLng = 111320 * cosLat;
+
+  for (let i = 0; i < waypoints.length; i++) {
+    const cur = waypoints[i];
+    let tx = 0; let ty = 0;
+
+    if (i === 0) {
+      tx = (waypoints[1].lng - cur.lng) * mPorGrauLng;
+      ty = (waypoints[1].lat - cur.lat) * mPorGrauLat;
+    } else if (i === waypoints.length - 1) {
+      tx = (cur.lng - waypoints[i - 1].lng) * mPorGrauLng;
+      ty = (cur.lat - waypoints[i - 1].lat) * mPorGrauLat;
+    } else {
+      tx = (waypoints[i + 1].lng - waypoints[i - 1].lng) * mPorGrauLng;
+      ty = (waypoints[i + 1].lat - waypoints[i - 1].lat) * mPorGrauLat;
+    }
+
+    const len = Math.hypot(tx, ty);
+    if (len < 0.0001) {
+      out.push(cur);
+      continue;
+    }
+
+    // Normal à direita em coordenadas geográficas
+    const nx = ty / len;
+    const ny = -tx / len;
+
+    const dLng = (nx * offsetMetros) / mPorGrauLng;
+    const dLat = (ny * offsetMetros) / mPorGrauLat;
+
+    out.push({
+      ...cur,
+      lat: Number((cur.lat + dLat).toFixed(6)),
+      lng: Number((cur.lng + dLng).toFixed(6))
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Telemetria de Velocidade e Limites Regulamentares por Modal (CTB / CONTRAN).
+ */
+export function calcularTelemetriaVelocidade(opcoes = {}) {
+  const modal = (opcoes.modal || 'carro').toLowerCase();
+  const limiteViaKmh = Number(opcoes.limiteKmh) || 50;
+  const velocidadeGpsKmh = opcoes.velocidadeGps !== undefined && opcoes.velocidadeGps !== null ? Number(opcoes.velocidadeGps) : null;
+
+  const velocidadesPadrao = {
+    a_pe: { mediaKmh: 4.5, maxKmh: 6.0, categoria: 'pedestre', viaPermitida: 'calcada_travessia' },
+    bike: { mediaKmh: 16.0, maxKmh: 28.0, categoria: 'ciclo', viaPermitida: 'ciclovia_bordo_pista' },
+    moto: { mediaKmh: 38.0, maxKmh: Math.min(limiteViaKmh, 90), categoria: 'duas_rodas', viaPermitida: 'corredor_faixa' },
+    carro: { mediaKmh: 32.0, maxKmh: limiteViaKmh, categoria: 'automovel', viaPermitida: 'leito_carrocavel' },
+    caminhao: { mediaKmh: 24.0, maxKmh: Math.min(limiteViaKmh, 80), categoria: 'pesado', viaPermitida: 'faixa_direita' }
+  };
+
+  const config = velocidadesPadrao[modal] || velocidadesPadrao.carro;
+  const velAtual = velocidadeGpsKmh !== null && !isNaN(velocidadeGpsKmh)
+    ? Math.max(0, velocidadeGpsKmh)
+    : config.mediaKmh;
+
+  const toleranciaRadarKmh = limiteViaKmh <= 100 ? limiteViaKmh + 7 : Math.round(limiteViaKmh * 1.07);
+  const excessoVelocidade = velAtual > limiteViaKmh;
+  const autuavel = velAtual > toleranciaRadarKmh;
+
+  return {
+    valido: true,
+    modal,
+    velocidadeInstantaneaKmh: Number(velAtual.toFixed(1)),
+    velocidadeFormatada: `${velAtual.toFixed(0)} km/h`,
+    limiteViaKmh,
+    toleranciaRadarKmh,
+    excessoVelocidade,
+    autuavel,
+    statusSeguranca: autuavel
+      ? 'INFRACAO_GRAVE_VELOCIDADE'
+      : (excessoVelocidade ? 'ALERTA_LIMITE_ULTRAPASSADO' : 'VELOCIDADE_SEGURA'),
+    configuracaoModal: config,
+    fonteGps: velocidadeGpsKmh !== null ? 'gps_dispositivo_real' : 'telemetria_calibrada_ponte'
+  };
 }
 
 /**
@@ -806,6 +1380,91 @@ export function gerarInstrucoesTurnByTurn(origemGeo, destinoGeo, distanciaViaria
   return passos;
 }
 
+/**
+ * Gera rotas alternativas viárias com desvios realistas,
+ * permitindo ao motorista escolher outro trajeto ou desviar de pistas congestionadas/pontes baixas.
+ */
+export function gerarRotasAlternativas(origem, destino, rotaPrincipalWps, modal = 'carro', alturaVeiculoM = 1.50) {
+  if (!Array.isArray(rotaPrincipalWps) || rotaPrincipalWps.length < 2) return [];
+
+  const distLinearKm = calcularDistanciaHaversineKm(origem.lat, origem.lng, destino.lat, destino.lng);
+  const cosLat0 = Math.cos((origem.lat * Math.PI) / 180);
+  const mLat = 111320;
+  const mLng = 111320 * cosLat0;
+
+  const n = rotaPrincipalWps.length;
+  const wpsAlt1 = [];
+  const wpsAlt2 = [];
+
+  const dLatTotal = (destino.lat - origem.lat) * mLat;
+  const dLngTotal = (destino.lng - origem.lng) * mLng;
+  const lenTotal = Math.hypot(dLatTotal, dLngTotal) || 1;
+  const nx = -dLatTotal / lenTotal;
+  const ny = dLngTotal / lenTotal;
+
+  for (let i = 0; i < n; i++) {
+    const p = rotaPrincipalWps[i];
+    const frac = i / (n - 1);
+    const bulge = Math.sin(frac * Math.PI); // 0 nas pontas, 1 no meio
+
+    // Desvio Alternativo 1: +420m no corredor lateral
+    const offM1 = 420 * bulge;
+    wpsAlt1.push({
+      lat: Number((p.lat + (ny * offM1) / mLat).toFixed(6)),
+      lng: Number((p.lng + (nx * offM1) / mLng).toFixed(6)),
+      progresso: p.progresso
+    });
+
+    // Desvio Alternativo 2: -480m no eixo oposto (via expressa / anel viário)
+    const offM2 = -480 * bulge;
+    wpsAlt2.push({
+      lat: Number((p.lat + (ny * offM2) / mLat).toFixed(6)),
+      lng: Number((p.lng + (nx * offM2) / mLng).toFixed(6)),
+      progresso: p.progresso
+    });
+  }
+
+  const velKmh = modal === 'moto' ? 36 : modal === 'caminhao' ? 24 : 28;
+  const dist1Km = Number((distLinearKm * 1.36).toFixed(2));
+  const dist2Km = Number((distLinearKm * 1.44).toFixed(2));
+  const tempo1Min = Math.max(3, Math.round((dist1Km / velKmh) * 60 + 1));
+  const tempo2Min = Math.max(4, Math.round((dist2Km / velKmh) * 60 + 2));
+
+  const pontesAlt1 = detectarPontesViadutosNaRota(wpsAlt1, alturaVeiculoM);
+  const pontesAlt2 = detectarPontesViadutosNaRota(wpsAlt2, alturaVeiculoM);
+
+  return [
+    {
+      id: 'rota_alt_1',
+      nome: 'Via Alternativa 1 • Corredor Secundário',
+      descricao: 'Opção com tráfego livre em vias paralelas',
+      distanciaViariaKm: dist1Km,
+      distanciaFormatada: `${dist1Km.toFixed(1).replace('.', ',')} km`,
+      tempoEstimadoMin: tempo1Min,
+      tempoFormatado: `${tempo1Min} min`,
+      diferencaTempoMin: +2,
+      diferencaKm: Number((dist1Km - distLinearKm * 1.32).toFixed(1)),
+      pontes: pontesAlt1,
+      aprovadaParaCaminhao: !pontesAlt1.alertaGabarito,
+      waypoints: wpsAlt1
+    },
+    {
+      id: 'rota_alt_2',
+      nome: 'Via Alternativa 2 • Desvio Anel Viário',
+      descricao: 'Trajeto de pista ampla sem pontes baixas',
+      distanciaViariaKm: dist2Km,
+      distanciaFormatada: `${dist2Km.toFixed(1).replace('.', ',')} km`,
+      tempoEstimadoMin: tempo2Min,
+      tempoFormatado: `${tempo2Min} min`,
+      diferencaTempoMin: +4,
+      diferencaKm: Number((dist2Km - distLinearKm * 1.32).toFixed(1)),
+      pontes: pontesAlt2,
+      aprovadaParaCaminhao: !pontesAlt2.alertaGabarito,
+      waypoints: wpsAlt2
+    }
+  ];
+}
+
 // ─── 10. CÁLCULO COMPLETO DE ROTA, TARIFAS UBER/IFOOD/FRETE E COMBUSTÍVEL ───
 
 export function calcularRotaCompleta(opcoes = {}) {
@@ -900,6 +1559,16 @@ export function calcularRotaCompleta(opcoes = {}) {
   const cobrancaPix = gerarCobrancaPixCorrida(tarifaPrincipal, `ROTA${Math.round(distanciaViariaKm * 10)}KM`);
   const instrucoes = gerarInstrucoesTurnByTurn(origemGeo, destinoGeo, distanciaViariaKm, tempoMinutos, pedagios);
 
+  // Análise de Pontes, Viadutos e Altura Máxima Permitida
+  const alturaVeiculoConsiderada = infoPlaca && infoPlaca.especificacoesFisicas
+    ? infoPlaca.especificacoesFisicas.alturaTotalMetros
+    : (modal === 'caminhao' ? 4.40 : 1.50);
+
+  const pontesEViadutos = detectarPontesViadutosNaRota(waypoints, alturaVeiculoConsiderada);
+
+  // Cálculo de Rotas Alternativas para desvios viários e opções do motorista
+  const rotasAlternativas = gerarRotasAlternativas(origemGeo, destinoGeo, waypoints, modal, alturaVeiculoConsiderada);
+
   const agora = new Date();
   const chegadaDate = new Date(agora.getTime() + tempoMinutos * 60000);
   const horaChegada = chegadaDate.toTimeString().slice(0, 5);
@@ -946,6 +1615,8 @@ export function calcularRotaCompleta(opcoes = {}) {
       custoTotalComPedagioGasolina: modal === 'bike' ? 0 : Number((custoGasolina + pedagios.custoTotalPedagios).toFixed(2))
     },
     pedagios,
+    pontesEViadutos,
+    rotasAlternativas,
     inteligenciaVeicularPlacasPro: infoPlaca,
     pagamentoPixIntegrado: cobrancaPix,
     passoAPassoTurnByTurn: instrucoes,

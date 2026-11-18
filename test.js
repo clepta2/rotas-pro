@@ -6,8 +6,16 @@ import {
   calcularRotaCompleta,
   otimizarRotaMultiParadas,
   calcularTrackingViagemAoVivo,
-  renderizarMapaRotaSvg
+  renderizarMapaRotaSvg,
+  gerarWaypointsMalhaViaria,
+  suavizarCurvasEsquinas,
+  aplicarOffsetMaoDireita,
+  calcularTelemetriaVelocidade,
+  detectarPontesViadutosNaRota,
+  gerarRotasAlternativas,
+  diagnosticarPlacaNaRota
 } from './rotas-pro.js';
+import { calcularCicloSemaforico } from './sinalizacao.js';
 import { GEO_MUNICIPIOS_IBGE } from './municipios_geo.js';
 
 let passed = 0;
@@ -177,6 +185,69 @@ console.log('\n8. Topografia, Sinalização Viária e Pedágios (R2 simulado em 
   assert(rota.sinalizacaoRota && rota.sinalizacaoRota.totalRadares === 1, 'Rota deve detectar o radar sobre o trajeto');
   assert(rota.sinalizacaoRota.trechosLimiteVelocidade[0].kmh === 50 && rota.sinalizacaoRota.trechosLimiteVelocidade[0].fonte === 'placa_osm', 'Rota deve usar a placa OSM como limite do trecho');
   assert(rota.perfilAltimetrico && rota.perfilAltimetrico.disponivel && rota.perfilAltimetrico.ganhoElevacaoM > 0, 'Rota deve ter perfil altimétrico com ganho de elevação');
+}
+
+console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos e Telemetria de Velocidade:');
+{
+  // Teste de Suavização de Esquinas (Bézier viário 90 graus)
+  const quina90 = [
+    { lat: -23.5600, lng: -46.6600 },
+    { lat: -23.5600, lng: -46.6500 },
+    { lat: -23.5700, lng: -46.6500 }
+  ];
+  const suave = suavizarCurvasEsquinas(quina90, 14, 3);
+  assert(suave.length > quina90.length, `Suavização deve inserir pontos de concordância Bézier (gerados: ${suave.length})`);
+  assert(suave[0].lat === quina90[0].lat && suave[suave.length - 1].lat === quina90[2].lat, 'Extremidades devem ser preservadas');
+
+  // Teste de Mão Direita (Offset perpendicular)
+  const maoDireita = aplicarOffsetMaoDireita(suave, 2.5);
+  assert(maoDireita.length === suave.length, 'Offset de mão direita deve manter a quantidade de waypoints');
+  assert(maoDireita[1].lat !== suave[1].lat || maoDireita[1].lng !== suave[1].lng, 'Pontos devem ter deslocamento lateral na pista');
+
+  // Teste do Ciclo Semafórico
+  const semCiclo = calcularCicloSemaforico(-23.5614, -46.6560);
+  assert(['VERDE', 'AMARELO', 'VERMELHO'].includes(semCiclo.estado), `Estado do semáforo deve ser válido (${semCiclo.estado})`);
+  assert(semCiclo.tempoRestanteSegundos > 0, `Tempo restante do semáforo deve ser positivo (${semCiclo.tempoRestanteSegundos}s)`);
+  assert(semCiclo.cicloTotalSegundos >= 60, `Ciclo total compatível CONTRAN (${semCiclo.cicloTotalSegundos}s)`);
+
+  // Teste de Telemetria de Velocidade por Modal
+  const velCarro = calcularTelemetriaVelocidade({ modal: 'carro', limiteKmh: 60, velocidadeGps: 58 });
+  assert(velCarro.valido && velCarro.velocidadeInstantaneaKmh === 58, 'Velocidade do carro deve refletir o valor informado');
+  assert(velCarro.statusSeguranca === 'VELOCIDADE_SEGURA', 'Status de segurança deve indicar velocidade segura');
+
+  const velExcesso = calcularTelemetriaVelocidade({ modal: 'moto', limiteKmh: 50, velocidadeGps: 65 });
+  assert(velExcesso.excessoVelocidade === true, 'Deve alertar excesso de velocidade acima de 50 km/h');
+  assert(velExcesso.autuavel === true, 'Deve classificar como autuável acima da margem de tolerância do radar');
+
+  // Teste de Corredores Arteriais Estruturais Urbanos
+  const rotaUrbana = gerarWaypointsMalhaViaria(
+    { lat: -23.5614, lng: -46.6558 },
+    { lat: -23.5869, lng: -46.6822 }
+  );
+  assert(rotaUrbana.length >= 10, 'Rota urbana estrutural Paulista -> Faria Lima deve conter waypoints arteriais detalhados');
+  assert(rotaUrbana[0].lat === -23.5614 && rotaUrbana[0].lng === -46.6558, 'Origem deve ser preservada');
+  assert(rotaUrbana[rotaUrbana.length - 1].lat === -23.5869 && rotaUrbana[rotaUrbana.length - 1].lng === -46.6822, 'Destino deve ser preservado');
+
+  // Teste de Pontes, Viadutos, Gabarito Vertical e Placas Pro Caminhão
+  const infoCaminhao = diagnosticarPlacaNaRota('CAM2026');
+  assert(infoCaminhao.especificacoesFisicas.ehVeiculoPesado === true, 'CAM2026 deve ser identificado como veículo pesado');
+  assert(infoCaminhao.especificacoesFisicas.alturaTotalMetros === 4.40, 'CAM2026 deve ter altura regulamentar de 4.40m');
+
+  const pontesRota = detectarPontesViadutosNaRota(rotaUrbana, infoCaminhao.especificacoesFisicas.alturaTotalMetros);
+  assert(Array.isArray(pontesRota.pontesNaRota), 'Deve retornar array de pontes no trajeto');
+  assert(typeof pontesRota.alertaGabarito === 'boolean', 'Deve avaliar alerta de gabarito vertical de pontes');
+
+  // Teste de Rotas Alternativas
+  const rotasAlts = gerarRotasAlternativas(
+    { lat: -23.5614, lng: -46.6558 },
+    { lat: -23.5869, lng: -46.6822 },
+    rotaUrbana,
+    'carro',
+    1.50
+  );
+  assert(rotasAlts.length === 2, 'Deve gerar 2 rotas alternativas para opção de desvio');
+  assert(rotasAlts[0].distanciaViariaKm > 0 && rotasAlts[1].distanciaViariaKm > 0, 'Rotas alternativas devem ter distâncias válidas');
+  assert(rotasAlts[0].waypoints.length === rotaUrbana.length, 'Waypoints das rotas alternativas devem ser consistentes');
 }
 
 console.log('\n========================================');

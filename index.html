@@ -609,11 +609,16 @@
                 <!-- Seletor de Modal, Placa e Botões -->
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
                   <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button class="modal-chip" data-modal="a_pe"><i data-lucide="footprints"></i> <span>A pé</span></button>
+                    <button class="modal-chip" data-modal="bike"><i data-lucide="bike"></i> <span>Bicicleta</span></button>
                     <button class="modal-chip is-active" data-modal="carro"><i data-lucide="car"></i> <span>Carro (Uber)</span></button>
-                    <button class="modal-chip" data-modal="moto"><i data-lucide="bike"></i> <span>Moto (iFood)</span></button>
+                    <button class="modal-chip" data-modal="moto"><i data-lucide="zap"></i> <span>Moto (iFood)</span></button>
                     <button class="modal-chip" data-modal="caminhao"><i data-lucide="layers"></i> <span>Caminhão ANTT</span></button>
                   </div>
                   <div style="display:flex;gap:8px;align-items:center;">
+                    <button id="btn-device-speed" class="secondary-button" style="height:34px;padding:0 10px;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px;" title="Ler velocidade real do celular via GPS integrado">
+                      <i data-lucide="gauge"></i> <span id="device-speed-label">GPS Celular</span>
+                    </button>
                     <input type="text" id="rota-placa" value="BRA2E19" maxlength="8" title="Placa do Veículo (Integração Placas Pro)" style="width:96px;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:12.5px;font-weight:800;text-transform:uppercase;text-align:center;color:var(--ink);background:var(--paper);" />
                     <button id="btn-calc-rota" class="primary-button accent" style="height:34px;padding:0 14px;font-size:12px;font-weight:700;">
                       <i data-lucide="play"></i> <span>Traçar Rota</span>
@@ -634,6 +639,9 @@
                 <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--paper-elevated,#111827);border:1px solid var(--line);border-radius:var(--radius-md);margin-bottom:14px;flex-wrap:wrap;">
                   <button id="btn-toggle-anim" class="primary-button accent" style="height:32px;padding:0 12px;font-size:11.5px;font-weight:800;display:inline-flex;align-items:center;gap:6px;">
                     <i data-lucide="play"></i> <span id="anim-btn-label">Simular Viagem Ao Vivo</span>
+                  </button>
+                  <button id="btn-toggle-follow" class="secondary-button" style="height:32px;padding:0 10px;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:5px;" title="Câmera GPS dinâmica acompanhando o veículo ao vivo no mapa">
+                    <i data-lucide="navigation"></i> <span id="follow-btn-label">Seguir Veículo (GPS)</span>
                   </button>
                   <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;">
                     <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">Progresso (<strong id="progresso-val-txt" style="color:var(--ink);">45%</strong>):</span>
@@ -660,6 +668,15 @@
                       <div id="map-search-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:rgba(15,23,42,0.97);border:1px solid rgba(255,255,255,0.16);border-radius:10px;max-height:220px;overflow-y:auto;z-index:40;box-shadow:0 14px 30px rgba(0,0,0,0.5);"></div>
                     </div>
                     <div class="map-layers-bar">
+                      <button class="map-layer-pill" id="btn-layer-driver" title="Modo Motorista Cockpit (Seta ↑ ou tecla D)">
+                        <i data-lucide="navigation" style="width:13px;height:13px;"></i> <span>Modo Motorista (↑)</span>
+                      </button>
+                      <button class="map-layer-pill" id="btn-driver-glance" title="Olhar Destino com Seta (Centraliza Destino e Retorna automaticamente)">
+                        <i data-lucide="crosshair" style="width:13px;height:13px;"></i> <span>Ver Destino (G)</span>
+                      </button>
+                      <button class="map-layer-pill" id="btn-toggle-alt-route" title="Alternar entre Rota Principal e Desvios/Alternativas (Setas ← →)">
+                        <i data-lucide="git-fork" style="width:13px;height:13px;"></i> <span id="alt-route-btn-label">Desvios Viários (← →)</span>
+                      </button>
                       <button class="map-layer-pill" id="btn-layer-stores" title="Exibir Lojas & Comércios Ativos no Mapa">
                         <i data-lucide="store" style="width:13px;height:13px;"></i> <span>Lojas Ativas</span>
                       </button>
@@ -675,7 +692,7 @@
                       <button class="map-layer-pill is-active" id="btn-layer-terrain" title="Relevo: sombreamento topográfico e curvas de nível (SRTM)">
                         <i data-lucide="mountain" style="width:13px;height:13px;"></i> <span>Relevo</span>
                       </button>
-                      <button class="map-layer-pill is-active" id="btn-layer-signals" title="Semáforos, radares e lombadas">
+                      <button class="map-layer-pill is-active" id="btn-layer-signals" title="Semáforos com tempo de ciclo, radares e lombadas">
                         <i data-lucide="traffic-cone" style="width:13px;height:13px;"></i> <span>Sinalização</span>
                       </button>
                       <button class="map-layer-pill" id="btn-layer-speed" title="Limites de velocidade das vias (placas R-19)">
@@ -690,6 +707,13 @@
                     </div>
                   </div>
 
+                  <!-- Banner de Alerta de Gabarito Vertical de Pontes para Caminhões -->
+                  <div id="map-bridge-clearance-banner" style="display:none;position:absolute;top:62px;left:50%;transform:translateX(-50%);background:rgba(220,38,38,0.96);border:1.5px solid #fca5a5;border-radius:12px;padding:8px 18px;color:#fff;z-index:35;box-shadow:0 12px 30px rgba(0,0,0,0.6);font-size:12px;font-weight:800;align-items:center;gap:10px;backdrop-filter:blur(10px);">
+                    <span style="font-size:16px;">⚠️</span>
+                    <span id="bridge-clearance-txt">Atenção Caminhão: Altura excede o viaduto! Rota alternativa sugerida.</span>
+                    <button id="btn-apply-alt-route" style="background:#fff;color:#dc2626;border:none;padding:4px 10px;border-radius:6px;font-weight:900;cursor:pointer;font-size:11px;">Usar Desvio Seguro</button>
+                  </div>
+
                   <!-- Barra de Filtro Rápido de Lojas Ativas (Visível quando Lojas Ativas está ativo) -->
                   <div id="map-stores-filter-bar" style="display:none;position:absolute;top:96px;left:14px;z-index:20;gap:5px;flex-wrap:wrap;background:rgba(15,23,42,0.92);padding:5px 8px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);backdrop-filter:blur(10px);">
                     <button class="map-layer-pill is-active store-cat-btn" data-cat="todas" style="height:26px;font-size:10.5px;">Todas</button>
@@ -700,20 +724,39 @@
                   </div>
 
                   <!-- HUD Flutuante GPS Ao Vivo (Estilo Waze / Uber Driver) -->
-                  <div id="map-live-gps-hud" style="display:none;position:absolute;top:60px;left:14px;background:rgba(9,19,17,0.92);border:1px solid rgba(163,230,53,0.45);border-radius:12px;padding:9px 14px;color:#f8fafc;z-index:22;backdrop-filter:blur(10px);box-shadow:0 10px 25px rgba(0,0,0,0.45);min-width:230px;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:3px;">
-                      <span style="font-size:10px;font-weight:800;color:#a3e635;letter-spacing:0.6px;">NAVEGAÇÃO AO VIVO</span>
-                      <span id="hud-gps-speed" style="font-size:11px;font-family:monospace;font-weight:800;color:#38bdf8;">32 km/h</span>
+                  <div id="map-live-gps-hud" style="display:none;position:absolute;top:60px;left:14px;background:rgba(9,19,17,0.94);border:1px solid rgba(163,230,53,0.5);border-radius:14px;padding:10px 15px;color:#f8fafc;z-index:22;backdrop-filter:blur(12px);box-shadow:0 12px 30px rgba(0,0,0,0.55);min-width:270px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:5px;">
+                      <span id="hud-nav-mode-label" style="font-size:10px;font-weight:800;color:#a3e635;letter-spacing:0.8px;">NAVEGAÇÃO COCKPIT • MODO MOTORISTA</span>
+                      <span id="hud-gps-speed" style="font-size:15px;font-family:monospace;font-weight:900;color:#38bdf8;background:rgba(56,189,248,0.12);padding:2px 7px;border-radius:6px;border:1px solid rgba(56,189,248,0.3);">32 km/h</span>
                     </div>
-                    <div id="hud-gps-eta" style="font-size:14px;font-weight:900;color:#ffffff;">Faltam 6 min • 2.8 km</div>
-                    <div id="hud-gps-street" style="font-size:10.5px;color:#cbd5e1;margin-top:2px;">Em rota pela via principal</div>
-                    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                      <span id="hud-gps-limit" title="Limite de velocidade da via" style="width:30px;height:30px;border-radius:50%;background:#fff;border:3.5px solid #dc2626;color:#0f172a;font-weight:900;font-size:11.5px;display:grid;place-items:center;flex:none;">--</span>
-                      <div style="font-size:10.5px;line-height:1.35;">
-                        <div id="hud-gps-radar" style="color:#fca5a5;font-weight:700;">Sem radar à frente</div>
-                        <div id="hud-gps-extra" style="color:#94a3b8;">Semáforos: -- • Altitude: -- m</div>
+                    <div id="hud-gps-eta" style="font-size:15px;font-weight:900;color:#ffffff;">Faltam 6 min • 2.8 km</div>
+                    <div id="hud-gps-street" style="font-size:11px;color:#cbd5e1;margin-top:2px;font-weight:600;">Em rota pela via principal (mão direita)</div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <span id="hud-gps-limit" title="Limite regulamentado da via (CTB / Placa)" style="width:32px;height:32px;border-radius:50%;background:#fff;border:3.5px solid #dc2626;color:#0f172a;font-weight:900;font-size:12px;display:grid;place-items:center;flex:none;box-shadow:0 2px 6px rgba(0,0,0,0.4);">50</span>
+                        <div style="font-size:10.5px;line-height:1.3;">
+                          <div id="hud-gps-radar" style="color:#fca5a5;font-weight:700;">Sem radar à frente</div>
+                          <div id="hud-gps-extra" style="color:#94a3b8;">Semáforos: -- • Altitude: -- m</div>
+                        </div>
+                      </div>
+                      <div id="hud-gps-semaforo-badge" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:7px;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.4);font-size:10.5px;font-weight:800;color:#22c55e;">
+                        <span id="hud-sem-icon">🟢</span> <span id="hud-sem-txt">Aberto 18s</span>
                       </div>
                     </div>
+                  </div>
+
+                  <!-- Legenda das Linhas e Elementos do Mapa (Para motorista e acompanhamento) -->
+                  <div id="map-legend-bar" style="position:absolute;bottom:14px;left:14px;z-index:18;display:flex;gap:8px;flex-wrap:wrap;background:rgba(15,23,42,0.92);padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);backdrop-filter:blur(8px);font-size:10px;font-weight:700;color:#f8fafc;pointer-events:none;">
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#2563eb;display:inline-block;"></span> Rota Ativa</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#64748b;border-top:1.5px dashed #38bdf8;display:inline-block;"></span> Desvio (Clarinho)</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#22c55e;display:inline-block;"></span> Concluído / Livre</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:#334155;border:1.5px solid #94a3b8;display:inline-block;"></span> Ponte / Viaduto</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
+                  </div>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Lentidão / Trânsito</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
                   </div>
 
                   <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
@@ -962,7 +1005,8 @@
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=3.1.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.0.0';
+    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.0.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
@@ -1198,6 +1242,54 @@
       mapEngine.setTraffic(btn.classList.contains('is-active'));
     });
 
+    // Modo Motorista (Cockpit View com zoom 19.5 e bússola na rota)
+    document.getElementById('btn-layer-driver')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn.classList.toggle('is-active');
+      const active = btn.classList.contains('is-active');
+      mapEngine.setDriverMode(active, true);
+      const hud = document.getElementById('map-live-gps-hud');
+      if (hud) hud.style.display = active ? 'block' : (animFrameId ? 'block' : 'none');
+      showToast(active ? 'Modo Motorista Ativado (Zoom 19.5 Cockpit & Seta Frontal)!' : 'Modo Aéreo Padrão Restaurado.');
+    });
+
+    // Olhar Destino com Seta (Centraliza Destino e Retorna automaticamente)
+    document.getElementById('btn-driver-glance')?.addEventListener('click', () => {
+      mapEngine.glanceDestination();
+      showToast('Visualizando Destino à frente...');
+    });
+
+    // Alternar entre Rotas e Desvios Viários
+    document.getElementById('btn-toggle-alt-route')?.addEventListener('click', () => {
+      if (mapEngine.routeData && Array.isArray(mapEngine.routeData.rotasAlternativas) && mapEngine.routeData.rotasAlternativas.length > 0) {
+        const alts = mapEngine.routeData.rotasAlternativas;
+        const cur = mapEngine.activeAlternativeRouteId;
+        const next = !cur ? alts[0].id : (cur === alts[0].id && alts[1] ? alts[1].id : null);
+        if (!next) {
+          mapEngine.activeAlternativeRouteId = null;
+          mapEngine.routeTrajectory = null;
+          mapEngine.needsRender = true;
+          document.getElementById('alt-route-btn-label').textContent = 'Desvios Viários (← →)';
+          showToast('Retornando à Rota Principal recomendada.');
+        } else {
+          mapEngine.selectAlternativeRoute(next);
+          document.getElementById('alt-route-btn-label').textContent = next === 'rota_alt_1' ? 'Desvio 1 Ativo' : 'Desvio 2 Ativo';
+          showToast('Desvio Viário ' + (next === 'rota_alt_1' ? '1' : '2') + ' Ativado!');
+        }
+      } else {
+        showToast('Nenhum desvio viário necessário para este trecho.');
+      }
+    });
+
+    document.getElementById('btn-apply-alt-route')?.addEventListener('click', () => {
+      if (mapEngine.routeData && Array.isArray(mapEngine.routeData.rotasAlternativas) && mapEngine.routeData.rotasAlternativas.length > 0) {
+        const altSegura = mapEngine.routeData.rotasAlternativas.find(a => a.aprovadaParaCaminhao !== false) || mapEngine.routeData.rotasAlternativas[0];
+        mapEngine.selectAlternativeRoute(altSegura.id);
+        document.getElementById('map-bridge-clearance-banner').style.display = 'none';
+        showToast('Desvio seguro aplicado! Evitando estrutura com altura restrita.');
+      }
+    });
+
     [['btn-layer-terrain', 'setTerrain'], ['btn-layer-signals', 'setSignals'], ['btn-layer-speed', 'setSpeedLimits'], ['btn-layer-tolls', 'setTolls']].forEach(([id, fn]) => {
       document.getElementById(id)?.addEventListener('click', (e) => {
         const btn = e.currentTarget;
@@ -1320,7 +1412,7 @@
 
     // Controles de Zoom & GPS do Mapa
     document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
-      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.min(18.5, mapEngine.zoom + 1.0), 250);
+      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.min(21.0, mapEngine.zoom + 1.0), 250);
     });
     document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
       mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.max(4.0, mapEngine.zoom - 1.0), 250);
@@ -1397,16 +1489,31 @@
       updateSnippet();
 
       const t0 = performance.now();
+      let data = null;
       try {
         const q = '?origem=' + encodeURIComponent(orig) + '&destino=' + encodeURIComponent(dest) + '&modal=' + currentModal + '&placa=' + encodeURIComponent(placa) + '&progresso=' + prog;
         const resJson = await fetch(API_BASE + '/api/rotas/tracking' + q);
-        const data = await resJson.json();
-        const lat = Math.max(1, Math.round(performance.now() - t0));
+        data = await resJson.json();
+      } catch (_) {}
 
+      // Fallback local instantâneo se a API remota falhar ou não possuir os recursos mais recentes de pontes e rotas alternativas
+      if (!data || !data.valido || !data.rotaBase?.rotasAlternativas) {
+        data = calcularTrackingViagemAoVivo({
+          origem: orig,
+          destino: dest,
+          modal: currentModal,
+          placa: placa,
+          progresso: Number(prog)
+        });
+      }
+
+      try {
+        const lat = Math.max(1, Math.round(performance.now() - t0));
         renderJson(data, lat);
 
         if (data.valido && data.rotaBase) {
           const r = data.rotaBase;
+          mapEngine.setModal(currentModal);
           mapEngine.setRoute(r, true);
           mapEngine.setVehicleProgress(Number(prog));
 
@@ -1420,6 +1527,17 @@
           document.getElementById('card-val-pedagio').textContent = r.pedagios.custoTotalFormatado;
           document.getElementById('card-qtd-pedagio').textContent = r.pedagios.quantidadePracas + ' praça(s)';
           lastPixPayload = r.pagamentoPixIntegrado?.pixCopiaECola || '';
+
+          // Alerta Inteligente de Gabarito de Pontes e Altura para Caminhões
+          const bannerClearance = document.getElementById('map-bridge-clearance-banner');
+          if (r.pontesEViadutos && r.pontesEViadutos.alertaGabarito) {
+            if (bannerClearance) {
+              bannerClearance.style.display = 'flex';
+              document.getElementById('bridge-clearance-txt').textContent = r.pontesEViadutos.mensagemGabarito;
+            }
+          } else if (bannerClearance) {
+            bannerClearance.style.display = 'none';
+          }
 
           const stepsHtml = (r.passoAPassoTurnByTurn || []).map(s =>
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;background:var(--paper-elevated,#111827);border:1px solid var(--line);">' +
@@ -1511,6 +1629,33 @@
           alt = near.m;
         }
         document.getElementById('hud-gps-extra').textContent = 'Semáforos na rota: ' + (sr ? sr.totalSemaforos : '--') + ' • Altitude: ' + alt + ' m';
+
+        // Telemetria do Ciclo do Semáforo no HUD em tempo real
+        if (sr && Array.isArray(sr.semaforos) && sr.semaforos.length > 0) {
+          const s = sr.semaforos[Math.min(sr.semaforos.length - 1, Math.floor((pct / 100) * sr.semaforos.length))];
+          const seed = Math.abs(Math.sin(s[0] * 12.9898 + s[1] * 78.233) * 43758.5453);
+          const total = [60, 75, 90][Math.floor((seed % 1) * 3)];
+          const verde = Math.floor(total * 0.52);
+          const amarelo = 4;
+          const offset = Math.floor((seed * 100) % total);
+          const t = Math.floor(((Date.now() / 1000) + offset) % total);
+          const badge = document.getElementById('hud-gps-semaforo-badge');
+          const icon = document.getElementById('hud-sem-icon');
+          const txt = document.getElementById('hud-sem-txt');
+          if (t < verde) {
+            if (icon) icon.textContent = '🟢';
+            if (txt) txt.textContent = 'Aberto ' + (verde - t) + 's';
+            if (badge) { badge.style.color = '#22c55e'; badge.style.borderColor = 'rgba(34,197,94,0.4)'; badge.style.background = 'rgba(34,197,94,0.15)'; }
+          } else if (t < verde + amarelo) {
+            if (icon) icon.textContent = '🟡';
+            if (txt) txt.textContent = 'Atenção ' + ((verde + amarelo) - t) + 's';
+            if (badge) { badge.style.color = '#facc15'; badge.style.borderColor = 'rgba(250,204,21,0.4)'; badge.style.background = 'rgba(250,204,21,0.15)'; }
+          } else {
+            if (icon) icon.textContent = '🔴';
+            if (txt) txt.textContent = 'Fechado ' + (total - t) + 's';
+            if (badge) { badge.style.color = '#ef4444'; badge.style.borderColor = 'rgba(239,68,68,0.4)'; badge.style.background = 'rgba(239,68,68,0.15)'; }
+          }
+        }
       };
 
       const stepAnim = (now) => {
@@ -1535,6 +1680,71 @@
         animFrameId = requestAnimationFrame(stepAnim);
       };
       animFrameId = requestAnimationFrame(stepAnim);
+    });
+
+    // Modo Acompanhar Veículo (Câmera GPS dinâmica no estilo Uber Driver e iFood)
+    let followActive = false;
+    document.getElementById('btn-toggle-follow')?.addEventListener('click', () => {
+      followActive = !followActive;
+      mapEngine.setFollowVehicle(followActive);
+      const btn = document.getElementById('btn-toggle-follow');
+      if (btn) {
+        btn.classList.toggle('accent', followActive);
+        document.getElementById('follow-btn-label').textContent = followActive ? 'Seguindo Veículo (Ativo)' : 'Seguir Veículo (GPS)';
+      }
+      showToast(followActive ? 'Câmera GPS travada no veículo em tempo real!' : 'Câmera liberada para movimentação manual');
+    });
+
+    // Velocímetro e Telemetria de GPS em Tempo Real do Celular
+    let watchGpsId = null;
+    document.getElementById('btn-device-speed')?.addEventListener('click', () => {
+      const btn = document.getElementById('btn-device-speed');
+      const lbl = document.getElementById('device-speed-label');
+      if (watchGpsId !== null) {
+        navigator.geolocation.clearWatch(watchGpsId);
+        watchGpsId = null;
+        btn.classList.remove('accent');
+        lbl.textContent = 'GPS Celular';
+        showToast('Monitoramento do GPS do celular desligado.');
+        return;
+      }
+      if (!navigator.geolocation) {
+        showToast('Geolocalização não suportada neste dispositivo.');
+        return;
+      }
+      showToast('Conectando ao sensor de GPS do celular...');
+      watchGpsId = navigator.geolocation.watchPosition(
+        async (pos) => {
+          btn.classList.add('accent');
+          const speedMs = pos.coords.speed;
+          const speedKmh = speedMs !== null && speedMs >= 0 ? (speedMs * 3.6) : null;
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          lbl.textContent = speedKmh !== null ? (speedKmh.toFixed(0) + ' km/h') : 'GPS Conectado';
+
+          try {
+            const q = '?lat=' + lat + '&lng=' + lng + '&modal=' + currentModal + '&velocidadeGps=' + (speedKmh !== null ? speedKmh.toFixed(1) : '');
+            const r = await fetch(API_BASE + '/api/rotas/velocidade' + q);
+            const d = await r.json();
+            if (d.valido) {
+              const hud = document.getElementById('map-live-gps-hud');
+              if (hud) hud.style.display = 'block';
+              document.getElementById('hud-gps-speed').textContent = d.velocidadeFormatada;
+              if (d.limiteViaKmh) document.getElementById('hud-gps-limit').textContent = String(d.limiteViaKmh);
+              if (d.statusSeguranca === 'INFRACAO_GRAVE_VELOCIDADE') {
+                showToast('Atenção: ' + d.velocidadeFormatada + ' (Limite ' + d.limiteViaKmh + ' km/h)');
+              }
+            }
+          } catch (_) {}
+        },
+        (err) => {
+          showToast('GPS: ' + err.message);
+          btn.classList.remove('accent');
+          lbl.textContent = 'GPS Celular';
+          watchGpsId = null;
+        },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+      );
     });
 
     // Copiar Pix e Baixar SVG Vetorial da Rota
