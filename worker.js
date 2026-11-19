@@ -59,12 +59,40 @@ async function lerTileR2(env, z, x, y) {
     if (rt) return await rt.json();
     const obj = await env.ROTAS_R2.get(`tiles/${z}/${x}/${y}.json`);
     if (obj) return await obj.json();
-  } catch (_) {}
+  } catch (error) {
+    console.error(`[Rotas R2] Falha ao ler tile ${z}/${x}/${y}:`, error);
+    throw error;
+  }
   return null;
 }
 
-async function enriquecerRotaComAStar(rota, env) {
-  if (!rota || !rota.valido || !env || !env.ROTAS_R2) return rota;
+export async function enriquecerRotaComAStar(rota, env) {
+  if (!rota || !rota.valido) return rota;
+
+  const marcarAproximada = (motivo) => {
+    const mensagens = {
+      MALHA_NAO_CONFIGURADA: 'a malha viária não está configurada neste ambiente',
+      OUT_OF_URBAN_RANGE: 'o trajeto está fora do alcance do roteador viário detalhado',
+      TOO_MANY_TILES: 'o trajeto cobre uma área maior que o limite do roteador viário detalhado',
+      NO_TILES_IN_R2: 'não há tiles de ruas publicados para esta área',
+      SPARSE_GRAPH: 'os dados viários disponíveis são insuficientes para conectar a rota',
+      NO_SNAP_NODES: 'não foi possível conectar origem e destino às ruas disponíveis',
+      PATH_NOT_CONNECTED: 'as ruas publicadas não formam um caminho conectado entre os pontos',
+      ERRO_ASTAR: 'ocorreu uma falha ao consultar a malha viária'
+    };
+    rota.geometriaRota = rota.geometriaRota || { waypoints: [] };
+    rota.geometriaRota.tipoRoteamento = 'geodesico_calibrado';
+    rota.qualidadeRoteamento = {
+      nivel: 'aproximado',
+      confiavel: false,
+      motivo,
+      mensagem: mensagens[motivo] || 'não foi possível confirmar um caminho na malha viária'
+    };
+    return rota;
+  };
+
+  if (!env || !env.ROTAS_R2) return marcarAproximada('MALHA_NAO_CONFIGURADA');
+
   try {
     const astar = await rotearPorMalhaRealR2(rota.origem, rota.destino, (z, x, y) => lerTileR2(env, z, x, y));
     if (astar && astar.found && astar.waypoints.length >= 3) {
@@ -74,6 +102,12 @@ async function enriquecerRotaComAStar(rota, env) {
         nodesGrafoAnalisados: astar.nodesGraph,
         totalWaypoints: astar.waypoints.length,
         waypoints: astar.waypoints
+      };
+      rota.qualidadeRoteamento = {
+        nivel: 'malha_real',
+        confiavel: true,
+        motivo: null,
+        mensagem: 'trajeto calculado sobre a malha viária disponível'
       };
       rota.resumoViagem.distanciaViariaKm = astar.distanciaRealKm;
       rota.resumoViagem.distanciaFormatada = `${astar.distanciaRealKm.toFixed(1).replace('.', ',')} km`;
@@ -94,9 +128,12 @@ async function enriquecerRotaComAStar(rota, env) {
         }
       }
     } else {
-      rota.geometriaRota.tipoRoteamento = 'geodesico_calibrado';
+      marcarAproximada(astar?.reason || 'NO_TILES_IN_R2');
     }
-  } catch (_) {}
+  } catch (error) {
+    console.error('[Rotas A*] Falha ao calcular caminho na malha viária:', error);
+    marcarAproximada('ERRO_ASTAR');
+  }
   return rota;
 }
 
@@ -160,7 +197,39 @@ const PLANOS_CONFIG = {
 };
 
 const minuteBuckets = new Map();
-const activeTripsStore = new Map();
+
+// ── Persistência de sessões de viagem no R2 (sobrevive entre isolates) ──
+const VIAGEM_R2_PREFIX = 'viagens/';
+
+async function lerViagemR2(env, id) {
+  if (!env || !env.ROTAS_R2) return null;
+  try {
+    const obj = await env.ROTAS_R2.get(`${VIAGEM_R2_PREFIX}${id}.json`);
+    if (!obj) return null;
+    return await obj.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function gravarViagemR2(env, id, tripObj) {
+  if (!env || !env.ROTAS_R2) return;
+  try {
+    await env.ROTAS_R2.put(`${VIAGEM_R2_PREFIX}${id}.json`, JSON.stringify(tripObj), {
+      httpMetadata: { contentType: 'application/json' }
+    });
+  } catch (_) {}
+}
+
+async function listarViagensR2(env) {
+  if (!env || !env.ROTAS_R2) return [];
+  try {
+    const list = await env.ROTAS_R2.list({ prefix: VIAGEM_R2_PREFIX });
+    return list.objects || [];
+  } catch (_) {
+    return [];
+  }
+}
 
 function resolverPlano(request) {
   const auth = request.headers.get('Authorization') || '';
@@ -842,6 +911,7 @@ export default {
         duracaoMs: Math.max(30, duracaoSegundos) * 1000
       };
       activeTripsStore.set(id, tripObj);
+      await gravarViagemR2(env, id, tripObj);
 
       const trackingInicial = calcularTrackingViagemAoVivo({ origem, destino, modal, placa, progresso: 0, viagemId: id });
       return jsonResp({
@@ -858,6 +928,13 @@ export default {
       const id = partes[0];
       const isSvg = partes[1] === 'mapa.svg';
       const trip = activeTripsStore.get(id);
+
+      if (!trip && env) {
+        const tripR2 = await lerViagemR2(env, id);
+        if (tripR2) {
+          activeTripsStore.set(id, tripR2);
+        }
+      }
 
       let prog = 50;
       let params = { origem: '01310-100', destino: '04538-133', modal: 'moto', placa: 'BRA2E19', viagemId: id };
@@ -879,7 +956,55 @@ export default {
       return jsonResp(calcularTrackingViagemAoVivo(params));
     }
 
-    // ── 7. ROTA: LISTA DE PRAÇAS DE PEDÁGIO DO BRASIL ──
+    // ── 7. ROTA: GPS CELULAR — SNAP-TO-ROAD + TELEMETRIA DE VELOCIDADE ──
+    // Ativa o GPS do celular, bate a coordenada na malha viária e retorna
+    // velocidade, status de segurança e posição corrigida no asfalto.
+    if (pathname === '/api/rotas/gps/celular') {
+      let params = {};
+      if (request.method === 'POST') {
+        try { params = await request.json(); } catch (_) {}
+      } else {
+        const lat = url.searchParams.get('lat');
+        const lng = url.searchParams.get('lng');
+        const velocidade = url.searchParams.get('velocidade');
+        const modal = url.searchParams.get('modal') || 'carro';
+        const limiteKmh = url.searchParams.get('limiteKmh') || '50';
+        const placa = url.searchParams.get('placa') || 'BRA2E19';
+        params = { lat, lng, velocidade, modal, limiteKmh, placa };
+      }
+
+      const lat = params.lat || params.latitude;
+      const lng = params.lng || params.longitude;
+      const velocidadeGps = params.velocidade !== undefined ? Number(params.velocidade) : null;
+      const modal = params.modal || 'carro';
+      const limiteKmh = Number(params.limiteKmh || 50);
+      const placa = params.placa || 'BRA2E19';
+
+      // Snap-to-road na malha viária (sem rota ativa ainda; apenas corridors conhecidos)
+      const snap = ajustarGpsNaMalhaViaria(lat, lng, null, 60);
+
+      // Telemetria de velocidade por modal
+      const telemetria = calcularTelemetriaVelocidade({
+        modal,
+        velocidadeGps,
+        limiteKmh,
+        placa
+      });
+
+      return jsonResp({
+        valido: snap.valido,
+        gpsBruto: { lat: Number(lat), lng: Number(lng) },
+        posicaoCorrigida: snap.valido ? snap.bestPoint : { lat: Number(lat), lng: Number(lng) },
+        nomeVia: snap.nomeVia || null,
+        heading: snap.bestHeading,
+        distanciaSnapM: snap.valido ? Math.round(snap.bestDist) : null,
+        telemetria,
+        placa,
+        timestamp: Date.now()
+      });
+    }
+
+    // ── 8. ROTA: LISTA DE PRAÇAS DE PEDÁGIO DO BRASIL ──
     if (pathname === '/api/rotas/pedagios') {
       const uf = (url.searchParams.get('uf') || '').toUpperCase().trim();
       const lista = uf ? PRACAS_PEDAGIO_BRASIL.filter((p) => p.uf === uf) : PRACAS_PEDAGIO_BRASIL;
@@ -902,7 +1027,8 @@ export default {
         'GET /api/mapas/elevacao?pontos=-23.56,-46.65;-23.60,-46.70',
         'GET /api/mapas/dados-locais?lat=-23.5614&lng=-46.6558',
         'GET /api/mapas/sinalizacao/{x}/{y}.json (célula z12)',
-        'GET /api/mapas/terreno/{z}/{x}/{y}.bin (grade Int16 128x128)'
+        'GET /api/mapas/terreno/{z}/{x}/{y}.bin (grade Int16 128x128)',
+        'GET/POST /api/rotas/gps/celular?lat=-23.5614&lng=-46.6558&velocidade=45&modal=carro&limiteKmh=50'
       ]
     }, 404);
   }

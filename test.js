@@ -20,6 +20,8 @@ import {
 } from './rotas-pro.js';
 import { calcularCicloSemaforico } from './sinalizacao.js';
 import { GEO_MUNICIPIOS_IBGE } from './municipios_geo.js';
+import { resumirCoberturaViewport } from './ponte-maps-engine.js';
+import { enriquecerRotaComAStar } from './worker.js';
 
 let passed = 0;
 let failed = 0;
@@ -192,6 +194,39 @@ console.log('\n8. Topografia, Sinalização Viária e Pedágios (R2 simulado em 
 
 console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos e Telemetria de Velocidade:');
 {
+  const coberturaTeste = resumirCoberturaViewport({
+    lat: 0,
+    lng: 0,
+    zoom: 2,
+    width: 256,
+    height: 256,
+    tileZoom: 2,
+    index: { 2: new Set(['2/2']), 1: new Set(['0/0']) },
+    fallbackZooms: [1]
+  });
+  assert(coberturaTeste.status === 'ready' && coberturaTeste.total === 4, 'Cobertura do viewport deve contar os tiles intersectados pelo enquadramento');
+  assert(coberturaTeste.native === 1 && coberturaTeste.fallback === 1 && coberturaTeste.missing === 2, 'Cobertura deve separar tiles nativos, ancestrais e ausentes');
+  assert(coberturaTeste.percent === 50, 'Percentual deve incluir tiles cobertos por fallback ancestral');
+
+  const rotaSemR2 = {
+    valido: true,
+    origem: { lat: -23.56, lng: -46.65 },
+    destino: { lat: -23.57, lng: -46.66 },
+    geometriaRota: { waypoints: [{ lat: -23.56, lng: -46.65 }, { lat: -23.57, lng: -46.66 }] }
+  };
+  await enriquecerRotaComAStar(rotaSemR2, {});
+  assert(rotaSemR2.qualidadeRoteamento?.nivel === 'aproximado', 'Rota sem binding R2 deve ser marcada como aproximada');
+  assert(rotaSemR2.qualidadeRoteamento?.confiavel === false, 'Rota aproximada não deve ser apresentada como caminho viário confirmado');
+
+  const rotaComFalhaR2 = {
+    valido: true,
+    origem: { lat: -23.56, lng: -46.65 },
+    destino: { lat: -23.57, lng: -46.66 },
+    geometriaRota: { waypoints: [{ lat: -23.56, lng: -46.65 }, { lat: -23.57, lng: -46.66 }] }
+  };
+  await enriquecerRotaComAStar(rotaComFalhaR2, { ROTAS_R2: { get: async () => { throw new Error('R2 indisponível'); } } });
+  assert(rotaComFalhaR2.qualidadeRoteamento?.motivo === 'ERRO_ASTAR', 'Falha ao consultar os tiles deve permanecer distinta de ausência de dados');
+
   // Teste de Suavização de Esquinas (Bézier viário 90 graus)
   const quina90 = [
     { lat: -23.5600, lng: -46.6600 },

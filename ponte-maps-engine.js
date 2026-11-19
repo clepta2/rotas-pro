@@ -11,6 +11,59 @@
  * - Animação de Viagem/Delivery a 60 FPS com interpolação contínua e rotação de veículo (bearing)
  */
 
+export function resumirCoberturaViewport({ lat, lng, zoom, width, height, tileZoom, index, fallbackZooms = [] }) {
+  if (!index) return { status: 'loading', total: 0, native: 0, fallback: 0, missing: 0, percent: 0 };
+
+  const n = 2 ** tileZoom;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const fx = ((lng + 180) / 360) * n;
+  const sinLat = Math.sin((clampedLat * Math.PI) / 180);
+  const fy = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * n;
+  const halfW = width / (2 * 256 * 2 ** (zoom - tileZoom));
+  const halfH = height / (2 * 256 * 2 ** (zoom - tileZoom));
+  const radius = Math.hypot(halfW, halfH);
+  const minX = Math.floor(fx - radius);
+  const maxX = Math.floor(fx + radius);
+  const minY = Math.max(0, Math.floor(fy - radius));
+  const maxY = Math.min(n - 1, Math.floor(fy + radius));
+  const seen = new Set();
+  let native = 0;
+  let fallback = 0;
+  let missing = 0;
+
+  for (let x = minX; x <= maxX; x++) {
+    const wrappedX = ((x % n) + n) % n;
+    for (let y = minY; y <= maxY; y++) {
+      const key = `${wrappedX}/${y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (index[tileZoom]?.has(key)) {
+        native++;
+        continue;
+      }
+
+      const hasFallback = fallbackZooms.some((fallbackZoom) => {
+        const shift = tileZoom - fallbackZoom;
+        if (shift <= 0) return false;
+        return index[fallbackZoom]?.has(`${wrappedX >> shift}/${y >> shift}`);
+      });
+      if (hasFallback) fallback++;
+      else missing++;
+    }
+  }
+
+  const total = native + fallback + missing;
+  return {
+    status: 'ready',
+    total,
+    native,
+    fallback,
+    missing,
+    percent: total ? Math.round(((native + fallback) / total) * 100) : 0
+  };
+}
+
 export class PonteMapEngine {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -55,6 +108,7 @@ export class PonteMapEngine {
     this.showTolls = options.showTolls !== false;
     this.terrainIndex = null;
     this.terrainIndexLoading = false;
+    this.terrainIndexError = null;
     this.terrainGrids = new Map();
     this.terrainBitmaps = new Map();
     this.terrainPending = new Set();
@@ -68,9 +122,14 @@ export class PonteMapEngine {
     // Tiles vetoriais de alta fidelidade (HQ v2) desenhados em vetor puro a cada frame
     this.hqIndex = null;
     this.hqIndexLoading = false;
+    this.hqIndexError = null;
     this.hqCache = new Map();
     this.hqPaths = new Map();
     this.hqPending = new Set();
+    this.coverageStatusElement = typeof document !== 'undefined' ? document.getElementById('map-coverage-status') : null;
+    this.routeQualityElement = typeof document !== 'undefined' ? document.getElementById('map-route-quality') : null;
+    this.lastCoverageUpdateAt = 0;
+    this.lastCoverageSignature = '';
     this.onMapClick = options.onMapClick || null;
     this.onStoreClick = options.onStoreClick || null;
     this.onZoomChange = options.onZoomChange || null;
@@ -83,6 +142,8 @@ export class PonteMapEngine {
     this.panVelX = 0;
     this.panVelY = 0;
     this.lastDragTime = 0;
+    this.targetZoom = this.zoom;
+    this.zoomAnchor = null;
     this.pinchDist = 0;
     this.flyAnim = null;
     this.needsRender = true;
@@ -90,8 +151,9 @@ export class PonteMapEngine {
 
     this._resize();
     this._bindEvents();
-    // Lazy-load: só carrega brasil.json (2.8MB) se iniciar em zoom nacional (<12.5)
-    if (this.zoom < 12.5) this._loadBrasilLayers();
+    this._loadBrasilLayers();
+    this._loadHqIndex();
+    this._loadTerrainIndex();
     this._startLoop();
   }
 
@@ -180,6 +242,8 @@ export class PonteMapEngine {
 
   setZoom(newZoom) {
     this.zoom = Math.max(4, Math.min(21.0, newZoom));
+    this.targetZoom = this.zoom;
+    this.zoomAnchor = null;
     if (this.onZoomChange) this.onZoomChange(this.zoom);
     this.needsRender = true;
   }
@@ -240,6 +304,7 @@ export class PonteMapEngine {
     this.routeData = routeData;
     this.routeTrajectory = null;
     this.currentVehicleAngle = undefined;
+    this._updateRouteQualityStatus();
     if (fitBounds && routeData && routeData.origem && routeData.destino) {
       const o = routeData.origem;
       const d = routeData.destino;
@@ -348,19 +413,23 @@ export class PonteMapEngine {
   }
 
   async _loadTerrainIndex() {
-    if (this.terrainIndex || this.terrainIndexLoading) return;
+    if (this.terrainIndex || this.terrainIndexLoading || this.terrainIndexError) return;
     this.terrainIndexLoading = true;
     try {
       const res = await fetch(`${this.apiBase}/api/mapas/terreno/index.json`);
-      if (res.ok) {
-        const j = await res.json();
-        const idx = {};
-        for (const [z, arr] of Object.entries(j.tiles || {})) idx[z] = new Set(arr);
-        this.terrainIndex = idx;
-        this.needsRender = true;
-      }
-    } catch (_) {}
-    this.terrainIndexLoading = false;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      const idx = {};
+      for (const [z, arr] of Object.entries(j.tiles || {})) idx[z] = new Set(arr);
+      this.terrainIndex = idx;
+      this.needsRender = true;
+    } catch (error) {
+      this.terrainIndexError = error instanceof Error ? error.message : String(error);
+      console.warn('[Mapa] Falha ao carregar índice do relevo:', error);
+      this.needsRender = true;
+    } finally {
+      this.terrainIndexLoading = false;
+    }
   }
 
   _hasTerrain(z, x, y) {
@@ -370,13 +439,13 @@ export class PonteMapEngine {
 
   _fetchTerrain(z, x, y) {
     const key = `${z}/${x}/${y}`;
-    if (this.terrainGrids.has(key) || this.terrainPending.has(key) || this.tileFetchPaused) return;
-    if (this.terrainPending.size >= 3) return;
+    if (this.terrainGrids.has(key) || this.terrainPending.has(key)) return;
+    if (this.terrainPending.size >= 12) return;
     this.terrainPending.add(key);
     this._cachedFetch(`${this.apiBase}/api/mapas/terreno/${key}.bin`, 'bin')
       .then((buf) => {
         const grid = buf && buf.byteLength === 128 * 128 * 2 ? new Int16Array(buf) : null;
-        if (this.terrainGrids.size >= 36) this.terrainGrids.delete(this.terrainGrids.keys().next().value);
+        if (this.terrainGrids.size >= 260) this.terrainGrids.delete(this.terrainGrids.keys().next().value);
         this.terrainGrids.set(key, grid);
         this.needsRender = true;
       })
@@ -472,7 +541,77 @@ export class PonteMapEngine {
     try {
       const res = await fetch(`${this.apiBase}/api/mapas/camadas/brasil.json`);
       if (res.ok) {
-        this.brasilGeo = await res.json();
+        const g = await res.json();
+        const calcBbox = (coords, isMulti) => {
+          let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+          const scanRing = (ring) => {
+            for (let i = 0; i < ring.length; i++) {
+              const x = ring[i][0]; const y = ring[i][1];
+              if (x < minX) minX = x; if (x > maxX) maxX = x;
+              if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+          };
+          if (isMulti) {
+            for (const poly of coords) {
+              if (Array.isArray(poly[0]) && Array.isArray(poly[0][0])) {
+                for (const r of poly) scanRing(r);
+              } else {
+                scanRing(poly);
+              }
+            }
+          } else {
+            scanRing(coords);
+          }
+          return [minX, minY, maxX, maxY];
+        };
+        for (const arr of [g.ufs, g.urban, g.rivers, g.roads]) {
+          if (!Array.isArray(arr)) continue;
+          for (const f of arr) {
+            const gt = f.geometry?.type;
+            const c = f.geometry?.coordinates;
+            if (!c) continue;
+            if (gt === 'Polygon' || gt === 'MultiLineString') f._bbox = calcBbox(c, true);
+            else if (gt === 'MultiPolygon') {
+              let b = [Infinity, Infinity, -Infinity, -Infinity];
+              for (const p of c) {
+                const pb = calcBbox(p, true);
+                if (pb[0] < b[0]) b[0] = pb[0]; if (pb[1] < b[1]) b[1] = pb[1];
+                if (pb[2] > b[2]) b[2] = pb[2]; if (pb[3] > b[3]) b[3] = pb[3];
+              }
+              f._bbox = b;
+            } else if (gt === 'LineString') {
+              f._bbox = calcBbox(c, false);
+            }
+          }
+        }
+        // Pré-projeta coordenadas em Web Mercator normalizado (0..1) para renderização 60 FPS sem Math.log por vértice
+        const projRing = (ring) => {
+          const out = new Float32Array(ring.length * 2);
+          for (let i = 0; i < ring.length; i++) {
+            const lng = ring[i][0]; const lat = ring[i][1];
+            const sinLat = Math.max(-0.9999, Math.min(0.9999, Math.sin((lat * Math.PI) / 180)));
+            out[i * 2] = (lng + 180) / 360;
+            out[i * 2 + 1] = 0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI);
+          }
+          return out;
+        };
+        const projGeom = (geom) => {
+          if (!geom || !geom.coordinates) return null;
+          const t = geom.type; const c = geom.coordinates;
+          if (t === 'LineString') return [projRing(c)];
+          if (t === 'MultiLineString' || t === 'Polygon') return c.map(projRing);
+          if (t === 'MultiPolygon') {
+            const rings = [];
+            for (const poly of c) for (const r of poly) rings.push(projRing(r));
+            return rings;
+          }
+          return null;
+        };
+        for (const arr of [g.ufs, g.urban, g.rivers, g.roads]) {
+          if (!Array.isArray(arr)) continue;
+          for (const f of arr) f._m = projGeom(f.geometry);
+        }
+        this.brasilGeo = g;
         this.needsRender = true;
       }
     } catch (_) {}
@@ -480,13 +619,11 @@ export class PonteMapEngine {
   }
 
   _scheduleMoveEnd() {
-    this.tileFetchPaused = true;
     clearTimeout(this.moveDebounceTimer);
     this.moveDebounceTimer = setTimeout(() => {
-      this.tileFetchPaused = false;
       this.needsRender = true;
       if (this.onMoveEnd) this.onMoveEnd({ lat: this.lat, lng: this.lng, zoom: this.zoom });
-    }, 180);
+    }, 160);
   }
 
   _fetchTile(z, x, y) {
@@ -653,37 +790,12 @@ export class PonteMapEngine {
       const my = e.clientY - rect.top;
       const before = this.screenToLatLng(mx, my);
 
-      // Rolagem suave, sedosa e proporcional (trackpad/mouse)
+      // Zoom contínuo interpolado a 60 FPS ancorado no cursor
       const rawDelta = e.deltaY;
-      const factor = e.deltaMode === 1 ? 0.05 : (e.deltaMode === 2 ? 0.4 : 0.0022);
-      const delta = Math.max(-0.55, Math.min(0.55, -rawDelta * factor));
-      this.zoom = Math.max(4, Math.min(21.0, this.zoom + delta));
-      if (this.onZoomChange) this.onZoomChange(this.zoom);
-
-      const afterProj = PonteMapEngine.project(before.lat, before.lng, this.zoom);
-      const isHeadUp = this.driverMode && this.headingUp && this.currentVehicleAngle !== undefined;
-      const ax = this.width / 2;
-      const ay = isHeadUp ? this.height * 0.70 : this.height / 2;
-
-      let unX = mx;
-      let unY = my;
-      if (isHeadUp) {
-        const rot = this.currentVehicleAngle + Math.PI / 2;
-        const cos = Math.cos(rot);
-        const sin = Math.sin(rot);
-        const dx = mx - ax;
-        const dy = my - ay;
-        unX = ax + dx * cos - dy * sin;
-        unY = ay + dx * sin + dy * cos;
-      }
-
-      const newCenterProj = {
-        x: afterProj.x - (unX - ax),
-        y: afterProj.y - (unY - ay)
-      };
-      const newCenter = PonteMapEngine.unproject(newCenterProj.x, newCenterProj.y, this.zoom);
-      this.lat = newCenter.lat;
-      this.lng = newCenter.lng;
+      const factor = e.deltaMode === 1 ? 0.06 : (e.deltaMode === 2 ? 0.45 : 0.0024);
+      const delta = Math.max(-0.65, Math.min(0.65, -rawDelta * factor));
+      this.targetZoom = Math.max(4, Math.min(21.0, (this.targetZoom ?? this.zoom) + delta));
+      this.zoomAnchor = { mx, my, lat: before.lat, lng: before.lng };
       this._scheduleMoveEnd();
       this.needsRender = true;
     }, { passive: false });
@@ -749,15 +861,48 @@ export class PonteMapEngine {
   }
 
   _startLoop() {
-    let lastFrame = 0;
     const tick = (now) => {
-      if (this.flyAnim) this.flyAnim(now);
+      if (this.flyAnim) {
+        this.flyAnim(now);
+        this.targetZoom = this.zoom;
+      }
+
+      // Interpolação suave de zoom (60 FPS sem saltos)
+      if (!this.flyAnim && this.targetZoom !== undefined && Math.abs(this.targetZoom - this.zoom) > 0.002) {
+        this.zoom += (this.targetZoom - this.zoom) * 0.28;
+        if (Math.abs(this.targetZoom - this.zoom) <= 0.002) this.zoom = this.targetZoom;
+        if (this.onZoomChange) this.onZoomChange(this.zoom);
+
+        if (this.zoomAnchor) {
+          const afterProj = PonteMapEngine.project(this.zoomAnchor.lat, this.zoomAnchor.lng, this.zoom);
+          const isHeadUp = this.driverMode && this.headingUp && this.currentVehicleAngle !== undefined;
+          const ax = this.width / 2;
+          const ay = isHeadUp ? this.height * 0.70 : this.height / 2;
+          let unX = this.zoomAnchor.mx;
+          let unY = this.zoomAnchor.my;
+          if (isHeadUp) {
+            const rot = this.currentVehicleAngle + Math.PI / 2;
+            const cos = Math.cos(rot);
+            const sin = Math.sin(rot);
+            const dx = unX - ax;
+            const dy = unY - ay;
+            unX = ax + dx * cos - dy * sin;
+            unY = ay + dx * sin + dy * cos;
+          }
+          const newCenter = PonteMapEngine.unproject(afterProj.x - (unX - ax), afterProj.y - (unY - ay), this.zoom);
+          this.lat = Math.max(-80, Math.min(80, newCenter.lat));
+          this.lng = newCenter.lng;
+        }
+        this.needsRender = true;
+      } else if (!this.flyAnim) {
+        this.zoomAnchor = null;
+      }
 
       // Inércia e Rolagem Sedosa Contínua (Kinetic Glide)
       if (!this.isDragging && !this.flyAnim && (Math.abs(this.panVelX) > 0.04 || Math.abs(this.panVelY) > 0.04)) {
         this._panBy(this.panVelX, this.panVelY);
-        this.panVelX *= 0.90;
-        this.panVelY *= 0.90;
+        this.panVelX *= 0.91;
+        this.panVelY *= 0.91;
         if (Math.abs(this.panVelX) < 0.04 && Math.abs(this.panVelY) < 0.04) {
           this.panVelX = 0;
           this.panVelY = 0;
@@ -765,8 +910,7 @@ export class PonteMapEngine {
         }
       }
 
-      if (this.needsRender && now - lastFrame >= 16) {
-        lastFrame = now;
+      if (this.needsRender) {
         this._render();
         this.needsRender = false;
       }
@@ -782,19 +926,19 @@ export class PonteMapEngine {
         land: '#f8f9fa',
         landuse: {
           residential: '#f1f3f4', commercial: '#edf2f7', industrial: '#ebe8ef', farm: '#eef0e2',
-          wood: '#dcfce7', grass: '#d1fae5', park: '#c8e6c9', cemetery: '#d3e3cd', sand: '#fef3c7',
-          wetland: '#d4ebe4', hospital: '#fee2e2', school: '#fef3c7', sport: '#d1fae5', parking: '#f3f4f6'
+          wood: '#e2efe5', grass: '#e6f2e8', park: '#d8ebd9', cemetery: '#dde8da', sand: '#fef3c7',
+          wetland: '#e0eceb', hospital: '#fee2e2', school: '#fef3c7', sport: '#dff0e4', parking: '#f3f4f6'
         },
-        water: '#d4e4f7', waterLine: '#7aa3d1', canalWall: '#94a3b8', aero: '#e8eaed',
+        water: '#dce7f3', waterLine: '#6488b4', canalWall: '#64748b', aero: '#e8eaed',
         bldg: '#e9ecef', bldgStroke: '#d1d5db', bldgTop: '#f1f3f4', bldgWall: '#d1d5db', bldgShadow: 'rgba(0,0,0,0.08)',
         roads: {
-          motorway: ['#e37400', '#fbbc04'], trunk: ['#f59e0b', '#fcd34d'], primary: ['#f9ab00', '#fef3c7'],
-          secondary: ['#cbd5e1', '#ffffff'], tertiary: ['#d1d5db', '#ffffff'], minor: ['#e2e8f0', '#ffffff'],
-          service: ['#e5e7eb', '#ffffff'], track: ['#d1d5db', '#fbfaf7'], path: [null, '#cbd5e1'],
-          raceway: ['#cbd5e1', '#ffe4e6'], busway: ['#93c5fd', '#dbeafe']
+          motorway: ['#c2410c', '#fbbf24'], trunk: ['#d97706', '#fcd34d'], primary: ['#b45309', '#fef08a'],
+          secondary: ['#94a3b8', '#ffffff'], tertiary: ['#94a3b8', '#ffffff'], minor: ['#cbd5e1', '#ffffff'],
+          service: ['#e2e8f0', '#ffffff'], track: ['#cbd5e1', '#fbfaf7'], path: [null, '#cbd5e1'],
+          raceway: ['#cbd5e1', '#ffe4e6'], busway: ['#7c3aed', '#ede9fe']
         },
-        tunnelAlpha: 0.45, bridgeCasing: '#64748b', bridgeShadow: 'rgba(15, 23, 42, 0.22)',
-        roundaboutIsland: '#c8e6c9', roundaboutCurb: '#94a3b8',
+        tunnelAlpha: 0.45, bridgeCasing: '#475569', bridgeShadow: 'rgba(15, 23, 42, 0.26)',
+        roundaboutIsland: '#d8ebd9', roundaboutCurb: '#64748b',
         rail: '#94a3b8', railDash: '#ffffff',
         text: '#202124', textHalo: 'rgba(255,255,255,0.98)', textMinor: '#5f6368', hn: '#80868b',
         oneway: 'rgba(95,99,104,0.70)', placeText: '#5f6368'
@@ -804,19 +948,19 @@ export class PonteMapEngine {
       land: '#090e17',
       landuse: {
         residential: '#0f172a', commercial: '#131d35', industrial: '#11192e', farm: '#0f1a26',
-        wood: '#064e3b', grass: '#065f46', park: '#047857', cemetery: '#0f2420', sand: '#1e2424',
-        wetland: '#082f49', hospital: '#3b0718', school: '#2e1c12', sport: '#065f46', parking: '#1e293b'
+        wood: '#0b2922', grass: '#0d332a', park: '#0f3d32', cemetery: '#0f2420', sand: '#1e2424',
+        wetland: '#0c2433', hospital: '#3b0718', school: '#2e1c12', sport: '#0d332a', parking: '#1e293b'
       },
-      water: '#0c233a', waterLine: '#255c8a', canalWall: '#334155', aero: '#1e293b',
+      water: '#0a1929', waterLine: '#335c81', canalWall: '#475569', aero: '#1e293b',
       bldg: '#1e293b', bldgStroke: '#334155', bldgTop: '#243048', bldgWall: '#111827', bldgShadow: 'rgba(0,0,0,0.40)',
       roads: {
-        motorway: ['#1d4ed8', '#2563eb'], trunk: ['#1e40af', '#3b82f6'], primary: ['#1e293b', '#475569'],
-        secondary: ['#0f172a', '#334155'], tertiary: ['#0f172a', '#1e293b'], minor: ['#090e17', '#1e293b'],
+        motorway: ['#7c2d12', '#f59e0b'], trunk: ['#854d0e', '#eab308'], primary: ['#0f172a', '#94a3b8'],
+        secondary: ['#090e17', '#475569'], tertiary: ['#090e17', '#334155'], minor: ['#090e17', '#263244'],
         service: ['#090e17', '#172033'], track: ['#090e17', '#292524'], path: [null, '#334155'],
-        raceway: ['#090e17', '#3b0724'], busway: ['#090e17', '#1d4ed8']
+        raceway: ['#090e17', '#3b0724'], busway: ['#0f172a', '#a855f7']
       },
-      tunnelAlpha: 0.4, bridgeCasing: '#475569', bridgeShadow: 'rgba(0, 0, 0, 0.55)',
-      roundaboutIsland: '#064e3b', roundaboutCurb: '#475569',
+      tunnelAlpha: 0.4, bridgeCasing: '#64748b', bridgeShadow: 'rgba(0, 0, 0, 0.60)',
+      roundaboutIsland: '#0f3d32', roundaboutCurb: '#64748b',
       rail: '#475569', railDash: '#0f172a',
       text: '#f8fafc', textHalo: 'rgba(9,14,23,0.95)', textMinor: '#94a3b8', hn: '#64748b',
       oneway: 'rgba(148,163,184,0.60)', placeText: '#94a3b8'
@@ -831,19 +975,19 @@ export class PonteMapEngine {
         land: '#f8f9fa',
         stateBorder: '#bdc1c6',
         urban: '#f1f3f4',
-        water: '#d4e4f7',
-        waterLine: '#7aa3d1',
-        park: '#c8e6c9',
+        water: '#dce7f3',
+        waterLine: '#6488b4',
+        park: '#d8ebd9',
         parkText: '#137333',
         bldgFill: '#e9ecef',
         bldgTop: '#f1f3f4',
         bldgSide: '#d1d5db',
         bldgStroke: '#cbd5e1',
-        roadCasing: '#e2e8f0',
-        highwayFill: '#fbbc04',
-        highwayCasing: '#e37400',
-        primaryFill: '#fef3c7',
-        primaryCasing: '#f9ab00',
+        roadCasing: '#94a3b8',
+        highwayFill: '#fbbf24',
+        highwayCasing: '#c2410c',
+        primaryFill: '#fef08a',
+        primaryCasing: '#b45309',
         streetFill: '#ffffff',
         roadText: '#202124',
         roadTextHalo: '#ffffff',
@@ -858,20 +1002,20 @@ export class PonteMapEngine {
       land: '#090e17',
       stateBorder: '#334155',
       urban: '#0f172a',
-      water: '#0c233a',
-      waterLine: '#255c8a',
-      park: '#064e3b',
+      water: '#0a1929',
+      waterLine: '#335c81',
+      park: '#0f3d32',
       parkText: '#34d399',
       bldgFill: '#1e293b',
       bldgTop: '#243048',
       bldgSide: '#111827',
       bldgStroke: '#334155',
       roadCasing: '#090e17',
-      highwayFill: '#2563eb',
-      highwayCasing: '#1d4ed8',
-      primaryFill: '#334155',
-      primaryCasing: '#1e293b',
-      streetFill: '#1e293b',
+      highwayFill: '#f59e0b',
+      highwayCasing: '#7c2d12',
+      primaryFill: '#94a3b8',
+      primaryCasing: '#0f172a',
+      streetFill: '#334155',
       roadText: '#f8fafc',
       roadTextHalo: '#090e17',
       poiBg: '#1e293b',
@@ -907,38 +1051,50 @@ export class PonteMapEngine {
       ctx.translate(-ax, -ay);
     }
 
-    // 1. Fundo
-    ctx.fillStyle = pal.land;
+    // 1. Fundo (oceano em zoom nacional/regional para destacar o continente brasileiro)
+    ctx.fillStyle = this.zoom < 11.5 ? pal.water : pal.land;
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // 2. Camada Nacional do Brasil (Fundo geográfico contínuo para zoom regional e nacional)
-    if (this.zoom < 13.0) {
+    const hqOn = this._hqActive();
+    const showBrasilBase = this.zoom < 13.0 || !hqOn;
+
+    // 2. Camada Nacional do Brasil (Fundo geográfico contínuo para todo o território nacional)
+    if (showBrasilBase) {
       if (!this.brasilGeo && !this.loadingBrasil) this._loadBrasilLayers();
-      if (this.brasilGeo) this._renderBrasilGeo(ctx, pal);
+      if (this.brasilGeo) this._renderBrasilGeo(ctx, pal, 'base');
     }
 
-    const hqOn = this._hqActive();
     let hqTiles = null;
     if (hqOn) {
       const hp = this._getHqPalette();
       hqTiles = this._hqVisibleTiles();
-      this._renderHqBase(ctx, hp, hqTiles, { n: 8 });
+      this._renderHqBase(ctx, hp, hqTiles, { n: 12 });
     }
 
-    // 2.5 Topografia: Hillshade + Tinta Hipsométrica + Curvas de Nível (some no zoom de rua para nitidez)
+    // 2.5 Topografia: Hillshade + Tinta Hipsométrica + Curvas de Nível (desenhada abaixo das vias/rios/fronteiras)
     if (this.showTerrain && this.zoom < 15.5) {
       ctx.save();
-      if (hqOn) ctx.globalAlpha = Math.max(0, Math.min(1, (15.5 - this.zoom) / 2.5)) * 0.75;
+      if (hqOn) {
+        ctx.globalAlpha = Math.max(0, Math.min(1, (15.5 - this.zoom) / 2.5)) * 0.42;
+      } else {
+        ctx.globalAlpha = this.zoom < 8.5 ? 0.55 : 0.65;
+      }
       this._renderTerrain(ctx, pal);
       ctx.restore();
     }
 
+    // 2.8 Rios, Rodovias Nacionais e Fronteiras Estaduais SEMPRE acima do relevo
+    if (showBrasilBase && this.brasilGeo) {
+      this._renderBrasilGeo(ctx, pal, 'overlay');
+    }
+
     // 3. Vias, ferrovias e edifícios: HQ v2 (nítido) ou tiles legados
+    const isZooming = this.targetZoom !== undefined && Math.abs(this.targetZoom - this.zoom) > 0.01;
     if (hqOn) {
       const hp = this._getHqPalette();
       this._renderHqTop(ctx, hp, hqTiles);
-      if (!this.isDragging && !this.flyAnim) this._renderHqLabels(ctx, hp, hqTiles);
-    } else if (this.zoom >= 9.5) {
+      if (!this.isDragging && !this.flyAnim && !isZooming) this._renderHqLabels(ctx, hp, hqTiles);
+    } else if (this.zoom >= 11.5) {
       this._renderVectorTiles(ctx, pal);
     }
 
@@ -997,6 +1153,64 @@ export class PonteMapEngine {
     }
 
     ctx.restore();
+    this._updateCoverageStatus();
+  }
+
+  _updateRouteQualityStatus() {
+    if (!this.routeQualityElement) return;
+    const quality = this.routeData?.qualidadeRoteamento;
+    this.routeQualityElement.hidden = !quality;
+    if (!quality) return;
+    const isApproximate = quality.nivel === 'aproximado';
+    this.routeQualityElement.style.color = isApproximate ? '#fbbf24' : '#86efac';
+    this.routeQualityElement.textContent = isApproximate
+      ? `Rota aproximada: ${quality.mensagem}. Confira o trajeto antes de sair.`
+      : `Malha viária: ${quality.mensagem}.`;
+    this.routeQualityElement.setAttribute('aria-label', this.routeQualityElement.textContent);
+  }
+
+  _updateCoverageStatus() {
+    const element = this.coverageStatusElement;
+    const now = performance.now();
+    if (!element || now - this.lastCoverageUpdateAt < 400) return;
+    this.lastCoverageUpdateAt = now;
+
+    const describe = (coverage) => {
+      if (coverage.status === 'loading') return 'carregando índice';
+      return `${coverage.percent}% listado (${coverage.native} nativo, ${coverage.fallback} ancestral, ${coverage.missing} ausente)`;
+    };
+    const loadState = (index, error) => error
+      ? `falha ao carregar índice (${error})`
+      : (index ? null : 'carregando índice');
+    const details = [];
+    if (this.zoom >= 10.5) {
+      const state = loadState(this.hqIndex, this.hqIndexError);
+      details.push(`Ruas HQ: ${state || describe(resumirCoberturaViewport({
+        lat: this.lat, lng: this.lng, zoom: this.zoom, width: this.width, height: this.height,
+        tileZoom: this._hqTileZoom(), index: this.hqIndex,
+        fallbackZooms: [this._hqTileZoom() - 1, this._hqTileZoom() - 2]
+      }))}`);
+    } else {
+      details.push('Ruas HQ: aproxime o zoom para verificar');
+    }
+
+    if (this.showTerrain && this.zoom < 15.5) {
+      const terrainZoom = this._terrainZoomFor(this.zoom);
+      const state = loadState(this.terrainIndex, this.terrainIndexError);
+      details.push(`Relevo: ${state || describe(resumirCoberturaViewport({
+        lat: this.lat, lng: this.lng, zoom: this.zoom, width: this.width, height: this.height,
+        tileZoom: terrainZoom, index: this.terrainIndex,
+        fallbackZooms: terrainZoom === 12 ? [10, 7] : (terrainZoom === 10 ? [7] : [])
+      }))}`);
+    } else {
+      details.push(`Relevo: ${this.showTerrain ? 'indisponível neste zoom' : 'desativado'}`);
+    }
+
+    const signature = details.join(' • ');
+    if (signature !== this.lastCoverageSignature) {
+      element.textContent = `Cobertura listada no enquadramento atual • ${signature}`;
+      this.lastCoverageSignature = signature;
+    }
   }
 
   // ════════ TOPOGRAFIA ════════
@@ -1007,11 +1221,11 @@ export class PonteMapEngine {
   }
 
   _getTerrainBitmap(key, z, grid) {
-    const bmpKey = `${key}_${this.theme}_${z >= 12 && this.zoom >= 12.5 ? 'c' : 'n'}`;
+    const bmpKey = `${key}_${this.theme}_${z >= 12 && this.zoom >= 13.5 ? 'c' : 'n'}`;
     if (this.terrainBitmaps.has(bmpKey)) return this.terrainBitmaps.get(bmpKey);
 
     const G = 128;
-    const S = 256;
+    const S = 128;
     const dark = this.theme === 'dark';
     const [, , ty] = key.split('/').map(Number);
     const n = Math.PI - (2 * Math.PI * (ty + 0.5)) / Math.pow(2, z);
@@ -1019,29 +1233,15 @@ export class PonteMapEngine {
     const cellM = (40075016 * Math.cos(latC)) / Math.pow(2, z) / G;
     const exag = z >= 12 ? 1.6 : z >= 10 ? 2.6 : 5;
 
-    const at = (gx, gy) => {
-      const x = Math.max(0, Math.min(G - 1, gx));
-      const y = Math.max(0, Math.min(G - 1, gy));
-      return grid[y * G + x];
-    };
-    const sample = (fx, fy) => {
-      const x0 = Math.floor(fx); const y0 = Math.floor(fy);
-      const tx = fx - x0; const tyy = fy - y0;
-      const a = at(x0, y0); const b = at(x0 + 1, y0); const c = at(x0, y0 + 1); const d = at(x0 + 1, y0 + 1);
-      return (a * (1 - tx) + b * tx) * (1 - tyy) + (c * (1 - tx) + d * tx) * tyy;
-    };
-
-    // Azimute 315° (NO), altitude 45° — iluminação cartográfica padrão
+    // Azimute 315° (NO), altitude 45° — vetor solar unitário pré-calculado (zero trig por pixel)
     const az = (315 * Math.PI) / 180;
     const alt = (45 * Math.PI) / 180;
     const sinAlt = Math.sin(alt); const cosAlt = Math.cos(alt);
-    const contours = z >= 12 && this.zoom >= 12.5;
-    const interval = 20;
-
-    const H = new Float32Array(S * S);
-    for (let py = 0; py < S; py++) {
-      for (let px = 0; px < S; px++) H[py * S + px] = sample((px + 0.5) / 2 - 0.5, (py + 0.5) / 2 - 0.5);
-    }
+    const lx = cosAlt * Math.sin(az);
+    const ly = -cosAlt * Math.cos(az);
+    const lz = sinAlt;
+    const contours = z >= 12 && this.zoom >= 13.5;
+    const interval = 25;
 
     const off = document.createElement('canvas');
     off.width = S;
@@ -1049,49 +1249,50 @@ export class PonteMapEngine {
     const octx = off.getContext('2d');
     const img = octx.createImageData(S, S);
     const px4 = img.data;
-    const step = cellM / 2;
+    const inv2StepExag = exag / (2 * cellM);
 
     for (let py = 0; py < S; py++) {
+      const row = py * S;
+      const rowU = Math.max(0, py - 1) * S;
+      const rowD = Math.min(S - 1, py + 1) * S;
       for (let px = 0; px < S; px++) {
-        const i = py * S + px;
-        const h = H[i];
-        const hl = H[py * S + Math.max(0, px - 1)];
-        const hr = H[py * S + Math.min(S - 1, px + 1)];
-        const hu = H[Math.max(0, py - 1) * S + px];
-        const hd = H[Math.min(S - 1, py + 1) * S + px];
-        const dzdx = ((hr - hl) / (2 * step)) * exag;
-        const dzdy = ((hd - hu) / (2 * step)) * exag;
-        const slope = Math.atan(Math.hypot(dzdx, dzdy));
-        const aspect = Math.atan2(dzdy, -dzdx);
-        let shade = sinAlt * Math.cos(slope) + cosAlt * Math.sin(slope) * Math.cos(az - Math.PI / 2 - aspect);
-        shade = Math.max(0, Math.min(1, shade));
+        const i = row + px;
+        const h = grid[i];
+        if (h <= 0) continue;
+        const hl = grid[row + Math.max(0, px - 1)];
+        const hr = grid[row + Math.min(S - 1, px + 1)];
+        const hu = grid[rowU + px];
+        const hd = grid[rowD + px];
+        const nx = (hl - hr) * inv2StepExag;
+        const ny = (hu - hd) * inv2StepExag;
+        let shade = (lx * nx + ly * ny + lz) / Math.sqrt(nx * nx + ny * ny + 1);
+        if (shade < 0) shade = 0;
+        else if (shade > 1) shade = 1;
 
         let r = 0; let g = 0; let b = 0; let a = 0;
-        if (h > 0) {
-          const dlt = shade - sinAlt;
-          if (dlt < 0) {
-            a = Math.min(dark ? 150 : 110, -dlt * (dark ? 420 : 300));
-          } else {
-            r = 255; g = 255; b = 255;
-            a = Math.min(dark ? 38 : 70, dlt * (dark ? 120 : 200));
-          }
-          // Tinta hipsométrica sutil em zoom regional (planícies verdes → planaltos ocre)
-          if (this.zoom < 11 && a < 40) {
-            const t = Math.min(1, h / 1400);
-            if (dark) { r = 40 + 60 * t; g = 70 + 20 * t; b = 50; }
-            else { r = 150 + 80 * t; g = 190 - 30 * t; b = 120 - 30 * t; }
-            a = Math.max(a, 26);
-          }
+        const dlt = shade - sinAlt;
+        if (dlt < 0) {
+          a = Math.min(dark ? 115 : 85, -dlt * (dark ? 320 : 230));
+        } else {
+          r = 255; g = 255; b = 255;
+          a = Math.min(dark ? 28 : 52, dlt * (dark ? 95 : 160));
+        }
+        // Tinta hipsométrica sutil em zoom regional (planícies neutras → planaltos ocre)
+        if (this.zoom < 11 && a < 32) {
+          const t = Math.min(1, h / 1400);
+          if (dark) { r = 36 + 48 * t; g = 48 + 22 * t; b = 44; }
+          else { r = 185 + 45 * t; g = 198 - 22 * t; b = 165 - 30 * t; }
+          a = Math.max(a, 12);
         }
 
-        if (contours && h > 0) {
+        if (contours && h > 3) {
           const band = Math.floor(h / interval);
           const bR = Math.floor(hr / interval);
           const bD = Math.floor(hd / interval);
           if (band !== bR || band !== bD) {
-            const index = band % 5 === 0 || bR % 5 === 0;
-            if (dark) { r = 180; g = 140; b = 90; } else { r = 150; g = 100; b = 50; }
-            a = index ? 120 : 60;
+            const index = band % 4 === 0 || bR % 4 === 0;
+            if (dark) { r = 180; g = 140; b = 90; } else { r = 140; g = 95; b = 50; }
+            a = index ? 55 : 24;
           }
         }
 
@@ -1101,7 +1302,7 @@ export class PonteMapEngine {
     }
     octx.putImageData(img, 0, 0);
 
-    if (this.terrainBitmaps.size >= 40) this.terrainBitmaps.delete(this.terrainBitmaps.keys().next().value);
+    if (this.terrainBitmaps.size >= 260) this.terrainBitmaps.delete(this.terrainBitmaps.keys().next().value);
     this.terrainBitmaps.set(bmpKey, off);
     return off;
   }
@@ -1127,25 +1328,60 @@ export class PonteMapEngine {
     const maxTx = Math.floor((tlx + this.width) / scaleFactor);
     const minTy = Math.floor(tly / scaleFactor);
     const maxTy = Math.floor((tly + this.height) / scaleFactor);
-    if ((maxTx - minTx + 1) * (maxTy - minTy + 1) > 30) return;
+    if ((maxTx - minTx + 1) * (maxTy - minTy + 1) > 320) return;
 
     let builtThisFrame = 0;
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     for (let tx = minTx; tx <= maxTx; tx++) {
       for (let ty = minTy; ty <= maxTy; ty++) {
-        if (!this._hasTerrain(tz, tx, ty)) continue;
-        const key = `${tz}/${tx}/${ty}`;
+        let drawZ = tz;
+        let drawX = tx;
+        let drawY = ty;
+        let drawScale = scaleFactor;
+        let drawOx = tx * scaleFactor - tlx;
+        let drawOy = ty * scaleFactor - tly;
+
+        if (!this._hasTerrain(tz, tx, ty)) {
+          // Fallback para tile pai (z10 ou z7) para nunca deixar buracos no relevo
+          let foundParent = false;
+          const fallbacks = tz === 12 ? [10, 7] : (tz === 10 ? [7] : []);
+          for (const pz of fallbacks) {
+            const shift = tz - pz;
+            const px = tx >> shift;
+            const py = ty >> shift;
+            if (this._hasTerrain(pz, px, py)) {
+              drawZ = pz; drawX = px; drawY = py;
+              drawScale = scaleFactor * Math.pow(2, shift);
+              drawOx = px * drawScale - tlx;
+              drawOy = py * drawScale - tly;
+              foundParent = true;
+              break;
+            }
+          }
+          if (!foundParent) continue;
+        }
+
+        const key = `${drawZ}/${drawX}/${drawY}`;
         const grid = this.terrainGrids.get(key);
-        if (grid === undefined) { this._fetchTerrain(tz, tx, ty); continue; }
+        if (grid === undefined) { this._fetchTerrain(drawZ, drawX, drawY); continue; }
         if (!grid) continue;
-        const bmpKey = `${key}_${this.theme}_${tz >= 12 && this.zoom >= 12.5 ? 'c' : 'n'}`;
+        const bmpKey = `${key}_${this.theme}_${drawZ >= 12 && this.zoom >= 13.5 ? 'c' : 'n'}`;
         if (!this.terrainBitmaps.has(bmpKey)) {
-          if (builtThisFrame >= 1 || this.isDragging) { setTimeout(() => { this.needsRender = true; }, 30); continue; }
+          if (builtThisFrame >= 4) { setTimeout(() => { this.needsRender = true; }, 16); continue; }
           builtThisFrame++;
         }
-        const bmp = this._getTerrainBitmap(key, tz, grid);
-        ctx.drawImage(bmp, tx * scaleFactor - tlx, ty * scaleFactor - tly, scaleFactor + 0.5, scaleFactor + 0.5);
+        const bmp = this._getTerrainBitmap(key, drawZ, grid);
+        if (drawZ === tz) {
+          ctx.drawImage(bmp, drawOx, drawOy, drawScale + 0.5, drawScale + 0.5);
+        } else {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(tx * scaleFactor - tlx, ty * scaleFactor - tly, scaleFactor + 0.6, scaleFactor + 0.6);
+          ctx.clip();
+          ctx.drawImage(bmp, drawOx, drawOy, drawScale + 0.5, drawScale + 0.5);
+          ctx.restore();
+        }
       }
     }
     ctx.restore();
@@ -1533,19 +1769,23 @@ export class PonteMapEngine {
 
   // ════════ RENDERIZADOR VETORIAL DE ALTA FIDELIDADE (HQ v2) ════════
   async _loadHqIndex() {
-    if (this.hqIndex || this.hqIndexLoading) return;
+    if (this.hqIndex || this.hqIndexLoading || this.hqIndexError) return;
     this.hqIndexLoading = true;
     try {
       const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json`);
-      if (res.ok) {
-        const j = await res.json();
-        const idx = {};
-        for (const [z, arr] of Object.entries(j.tiles || {})) idx[z] = new Set(arr);
-        this.hqIndex = idx;
-        this.needsRender = true;
-      }
-    } catch (_) {}
-    this.hqIndexLoading = false;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      const idx = {};
+      for (const [z, arr] of Object.entries(j.tiles || {})) idx[z] = new Set(arr);
+      this.hqIndex = idx;
+      this.needsRender = true;
+    } catch (error) {
+      this.hqIndexError = error instanceof Error ? error.message : String(error);
+      console.warn('[Mapa] Falha ao carregar índice de ruas HQ:', error);
+      this.needsRender = true;
+    } finally {
+      this.hqIndexLoading = false;
+    }
   }
 
   _hasHq(z, x, y) {
@@ -1555,11 +1795,11 @@ export class PonteMapEngine {
 
   _fetchHq(z, x, y) {
     const key = `${z}/${x}/${y}`;
-    if (this.hqCache.has(key) || this.hqPending.has(key) || this.hqPending.size >= 8) return;
+    if (this.hqCache.has(key) || this.hqPending.has(key) || this.hqPending.size >= 12) return;
     this.hqPending.add(key);
     this._cachedFetch(`${this.apiBase}/api/mapas/hq/${key}.json`, 'json')
       .then((t) => {
-        if (this.hqCache.size >= 56) {
+        if (this.hqCache.size >= 96) {
           const old = this.hqCache.keys().next().value;
           this.hqCache.delete(old);
           this.hqPaths.delete(old);
@@ -1784,7 +2024,7 @@ export class PonteMapEngine {
   }
 
   _hqActive() {
-    if (this.zoom < 9.5) return false;
+    if (this.zoom < 10.5) return false;
     if (!this.hqIndex) { this._loadHqIndex(); return false; }
     const tz = this._hqTileZoom();
     const c = PonteMapEngine.tileOf(this.lat, this.lng, tz);
@@ -1792,8 +2032,6 @@ export class PonteMapEngine {
   }
 
   _renderHqBase(ctx, hp, tiles, budget) {
-    ctx.fillStyle = hp.land;
-    ctx.fillRect(0, 0, this.width, this.height);
     for (const it of tiles) {
       const P = this._hqPathsFor(it, budget);
       if (!P) continue;
@@ -1805,6 +2043,8 @@ export class PonteMapEngine {
       ctx.clip();
       ctx.translate(it.ox, it.oy);
       ctx.scale(u, u);
+      ctx.fillStyle = hp.land;
+      ctx.fillRect(0, 0, 4096, 4096);
       for (const [k, p] of P.land) {
         ctx.fillStyle = hp.landuse[k] || hp.landuse.residential;
         ctx.fill(p);
@@ -1845,7 +2085,8 @@ export class PonteMapEngine {
   _renderHqTop(ctx, hp, tiles) {
     const order = ['service', 'track', 'minor', 'raceway', 'busway', 'tertiary_l', 'tertiary', 'secondary_l', 'secondary', 'primary_l', 'primary', 'trunk_l', 'trunk', 'motorway_l', 'motorway'];
     const showMinor = this.zoom >= 13.2;
-    const casingOn = this.zoom >= 13.5;
+    const casingAll = this.zoom >= 13.5;
+    const casingMajor = this.zoom >= 10.5;
 
     for (const it of tiles) {
       const P = it.P;
@@ -1862,17 +2103,19 @@ export class PonteMapEngine {
 
       const strokeGroup = (map, alpha = 1, casingColor = null) => {
         ctx.globalAlpha = alpha;
-        if (casingOn) {
+        if (casingMajor) {
           for (const k of order) {
             const p = map.get(k);
             if (!p) continue;
             const base = k.replace('_l', '');
             if (!showMinor && (base === 'minor' || base === 'service' || base === 'track')) continue;
+            const isMajor = base === 'motorway' || base === 'trunk' || base === 'primary' || base === 'secondary';
+            if (!casingAll && !isMajor && !casingColor) continue;
             const col = casingColor || (hp.roads[base] || hp.roads.minor)[0];
             if (!col) continue;
             const w = this._hqRoadWidth(k);
             ctx.strokeStyle = col;
-            ctx.lineWidth = (w + Math.max(1.2, Math.min(3, w * 0.16)) * 2) / u;
+            ctx.lineWidth = (w + Math.max(1.4, Math.min(3.4, w * 0.20)) * 2) / u;
             ctx.stroke(p);
           }
         }
@@ -1945,14 +2188,14 @@ export class PonteMapEngine {
         }
       }
 
-      // Trânsito ao vivo dentro do leito da via (estilo Google)
-      if (this.showTraffic && this.zoom >= 12.5) {
-        const cols = ['#22c55e', '#f59e0b', '#ef4444'];
+      // Trânsito ao vivo discreto dentro do leito da via (sem cobrir a cor das rodovias)
+      if (this.showTraffic && this.zoom >= 13.8) {
+        const cols = ['#16a34a', '#f59e0b', '#ef4444'];
         for (let i = 0; i < 3; i++) {
           if (!P.hasTraffic[i]) continue;
           ctx.strokeStyle = cols[i];
-          ctx.globalAlpha = this.theme === 'dark' ? 0.75 : 0.85;
-          ctx.lineWidth = Math.max(1.6, Math.min(6, this._hqRoadWidth('primary') * 0.45)) / u;
+          ctx.globalAlpha = i === 0 ? (this.theme === 'dark' ? 0.38 : 0.42) : (this.theme === 'dark' ? 0.72 : 0.80);
+          ctx.lineWidth = Math.max(1.1, Math.min(3.2, this._hqRoadWidth('primary') * 0.22)) / u;
           ctx.stroke(P.traffic[i]);
         }
         ctx.globalAlpha = 1;
@@ -1978,7 +2221,7 @@ export class PonteMapEngine {
         ctx.translate(2.2 / u, 2.6 / u);
         strokeGroup(P.bridge, 0.55, hp.bridgeShadow);
         ctx.restore();
-        strokeGroup(P.bridge, 1, this.zoom >= 14.2 ? hp.bridgeCasing : null);
+        strokeGroup(P.bridge, 1, this.zoom >= 11.5 ? hp.bridgeCasing : null);
       }
 
       // Ilhas centrais e demarcação de rotatórias (inclusive rotatórias sobre canais)
@@ -2074,7 +2317,7 @@ export class PonteMapEngine {
           ctx.restore();
           for (const band of P.bands) {
             const off = Math.min(28, (band.h / mpp) * 0.22);
-            const steps = Math.max(1, Math.min(8, Math.ceil(off / 3.0)));
+            const steps = Math.max(1, Math.min(3, Math.ceil(off / 7.0)));
             ctx.fillStyle = hp.bldgWall;
             for (let s = 0; s < steps; s++) {
               const o = (off * s) / steps;
@@ -2100,6 +2343,22 @@ export class PonteMapEngine {
 
   // Rótulos em espaço de tela: nomes de ruas curvados ao longo da via, bairros, POIs e números
   _renderHqLabels(ctx, hp, tiles) {
+    const cacheKey = `${this.lat.toFixed(5)}_${this.lng.toFixed(5)}_${this.zoom.toFixed(2)}_${this.theme}_${this.width}x${this.height}_${tiles.length}_${this.hqCache.size}`;
+    if (this._labelCache && this._labelCache.key === cacheKey) {
+      ctx.drawImage(this._labelCache.canvas, 0, 0, this.width, this.height);
+      return;
+    }
+    if (!this._labelCacheCanvas) this._labelCacheCanvas = document.createElement('canvas');
+    const lc = this._labelCacheCanvas;
+    const lw = Math.round(this.width * this.dpr);
+    const lh = Math.round(this.height * this.dpr);
+    if (lc.width !== lw || lc.height !== lh) { lc.width = lw; lc.height = lh; }
+    const lctx = lc.getContext('2d');
+    lctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    lctx.clearRect(0, 0, this.width, this.height);
+    const origCtx = ctx;
+    ctx = lctx;
+
     const grid = new Map();
     const cell = 22;
     const occupied = (x, y, w, h) => {
@@ -2314,6 +2573,9 @@ export class PonteMapEngine {
         }
       }
     }
+
+    this._labelCache = { key: cacheKey, canvas: lc };
+    origCtx.drawImage(lc, 0, 0, this.width, this.height);
   }
 
   _renderStores(ctx, pal) {
@@ -2488,64 +2750,125 @@ export class PonteMapEngine {
     }
   }
 
-  _renderBrasilGeo(ctx, pal) {
+  _drawMercatorRings(ctx, rings, ox, oy, scale) {
+    if (!rings) return;
+    for (let r = 0; r < rings.length; r++) {
+      const arr = rings[r];
+      if (arr.length < 2) continue;
+      ctx.moveTo(ox + arr[0] * scale, oy + arr[1] * scale);
+      for (let i = 2; i < arr.length; i += 2) {
+        ctx.lineTo(ox + arr[i] * scale, oy + arr[i + 1] * scale);
+      }
+    }
+  }
+
+  _renderBrasilGeo(ctx, pal, pass = 'all') {
     const g = this.brasilGeo;
-    // Estados
-    if (g.ufs) {
-      ctx.beginPath();
-      for (const uf of g.ufs) {
-        if (uf.geometry.type === 'Polygon') this._drawGeoPath(ctx, uf.geometry.coordinates, true);
-        else if (uf.geometry.type === 'MultiPolygon') {
-          for (const p of uf.geometry.coordinates) this._drawGeoPath(ctx, p, true);
+    const scale = 256 * Math.pow(2, this.zoom);
+    const center = PonteMapEngine.project(this.lat, this.lng, this.zoom);
+    const isHeadUp = this.driverMode && this.headingUp && this.currentVehicleAngle !== undefined;
+    const ax = this.width / 2;
+    const ay = isHeadUp ? this.height * 0.70 : this.height / 2;
+    const ox = ax - center.x;
+    const oy = ay - center.y;
+
+    const tl = this.screenToLatLng(0, 0);
+    const br = this.screenToLatLng(this.width, this.height);
+    const vMinLng = Math.min(tl.lng, br.lng) - 0.5;
+    const vMaxLng = Math.max(tl.lng, br.lng) + 0.5;
+    const vMinLat = Math.min(tl.lat, br.lat) - 0.5;
+    const vMaxLat = Math.max(tl.lat, br.lat) + 0.5;
+    const inBbox = (f) => {
+      const b = f._bbox;
+      if (!b) return true;
+      return !(b[2] < vMinLng || b[0] > vMaxLng || b[3] < vMinLat || b[1] > vMaxLat);
+    };
+
+    // Passo 1 (base): preenchimento do território brasileiro e manchas urbanas (abaixo do relevo)
+    if (pass === 'all' || pass === 'base') {
+      if (g.ufs) {
+        ctx.beginPath();
+        for (const uf of g.ufs) {
+          if (!inBbox(uf)) continue;
+          if (uf._m) this._drawMercatorRings(ctx, uf._m, ox, oy, scale);
+          else if (uf.geometry.type === 'Polygon') this._drawGeoPath(ctx, uf.geometry.coordinates, true);
+          else if (uf.geometry.type === 'MultiPolygon') {
+            for (const p of uf.geometry.coordinates) this._drawGeoPath(ctx, p, true);
+          }
         }
+        ctx.fillStyle = pal.land;
+        ctx.fill();
       }
-      ctx.strokeStyle = pal.stateBorder;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+
+      if (g.urban && this.zoom >= 6) {
+        ctx.beginPath();
+        for (const u of g.urban) {
+          if (!inBbox(u)) continue;
+          if (u._m) this._drawMercatorRings(ctx, u._m, ox, oy, scale);
+          else if (u.geometry.type === 'Polygon') this._drawGeoPath(ctx, u.geometry.coordinates, true);
+          else if (u.geometry.type === 'MultiPolygon') {
+            for (const p of u.geometry.coordinates) this._drawGeoPath(ctx, p, true);
+          }
+        }
+        ctx.fillStyle = pal.urban;
+        ctx.fill();
+      }
     }
 
-    // Manchas Urbanas
-    if (g.urban && this.zoom >= 6) {
-      ctx.beginPath();
-      for (const u of g.urban) {
-        if (u.geometry.type === 'Polygon') this._drawGeoPath(ctx, u.geometry.coordinates, true);
-        else if (u.geometry.type === 'MultiPolygon') {
-          for (const p of u.geometry.coordinates) this._drawGeoPath(ctx, p, true);
+    // Passo 2 (overlay): fronteiras estaduais, rios e rodovias nacionais (acima do relevo)
+    if (pass === 'all' || pass === 'overlay') {
+      if (g.ufs) {
+        ctx.beginPath();
+        for (const uf of g.ufs) {
+          if (!inBbox(uf)) continue;
+          if (uf._m) this._drawMercatorRings(ctx, uf._m, ox, oy, scale);
+          else if (uf.geometry.type === 'Polygon') this._drawGeoPath(ctx, uf.geometry.coordinates, true);
+          else if (uf.geometry.type === 'MultiPolygon') {
+            for (const p of uf.geometry.coordinates) this._drawGeoPath(ctx, p, true);
+          }
         }
+        ctx.strokeStyle = pal.stateBorder;
+        ctx.lineWidth = this.zoom >= 7 ? 1.4 : 1.1;
+        ctx.stroke();
       }
-      ctx.fillStyle = pal.urban;
-      ctx.fill();
-    }
 
-    // Rios Reais com margem divisória
-    if (g.rivers) {
-      ctx.beginPath();
-      for (const r of g.rivers) {
-        if (r.geometry.type === 'LineString') this._drawGeoPath(ctx, r.geometry.coordinates, false);
-        else if (r.geometry.type === 'MultiLineString') {
-          for (const l of r.geometry.coordinates) this._drawGeoPath(ctx, l, false);
+      if (g.rivers) {
+        ctx.beginPath();
+        for (const r of g.rivers) {
+          if (!inBbox(r)) continue;
+          if (r._m) this._drawMercatorRings(ctx, r._m, ox, oy, scale);
+          else if (r.geometry.type === 'LineString') this._drawGeoPath(ctx, r.geometry.coordinates, false);
+          else if (r.geometry.type === 'MultiLineString') {
+            for (const l of r.geometry.coordinates) this._drawGeoPath(ctx, l, false);
+          }
         }
+        ctx.strokeStyle = pal.waterLine || pal.water;
+        ctx.lineWidth = this.zoom > 8 ? 3.6 : 2.2;
+        ctx.stroke();
+        ctx.strokeStyle = pal.water;
+        ctx.lineWidth = this.zoom > 8 ? 2.2 : 1.3;
+        ctx.stroke();
       }
-      ctx.strokeStyle = pal.waterLine || pal.water;
-      ctx.lineWidth = this.zoom > 8 ? 4.0 : 2.4;
-      ctx.stroke();
-      ctx.strokeStyle = pal.water;
-      ctx.lineWidth = this.zoom > 8 ? 2.4 : 1.4;
-      ctx.stroke();
-    }
 
-    // Rodovias Nacionais Reais
-    if (g.roads) {
-      ctx.beginPath();
-      for (const rd of g.roads) {
-        if (rd.geometry.type === 'LineString') this._drawGeoPath(ctx, rd.geometry.coordinates, false);
-        else if (rd.geometry.type === 'MultiLineString') {
-          for (const l of rd.geometry.coordinates) this._drawGeoPath(ctx, l, false);
+      if (g.roads) {
+        ctx.beginPath();
+        for (const rd of g.roads) {
+          if (!inBbox(rd)) continue;
+          if (rd._m) this._drawMercatorRings(ctx, rd._m, ox, oy, scale);
+          else if (rd.geometry.type === 'LineString') this._drawGeoPath(ctx, rd.geometry.coordinates, false);
+          else if (rd.geometry.type === 'MultiLineString') {
+            for (const l of rd.geometry.coordinates) this._drawGeoPath(ctx, l, false);
+          }
         }
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = pal.highwayCasing;
+        ctx.lineWidth = this.zoom > 8 ? 3.8 : 2.2;
+        ctx.stroke();
+        ctx.strokeStyle = pal.highwayFill;
+        ctx.lineWidth = this.zoom > 8 ? 2.2 : 1.2;
+        ctx.stroke();
       }
-      ctx.strokeStyle = this.theme === 'light' ? '#f9ab00' : '#334155';
-      ctx.lineWidth = this.zoom > 8 ? 2.2 : 1.1;
-      ctx.stroke();
     }
   }
 
@@ -2657,9 +2980,9 @@ export class PonteMapEngine {
       octx.stroke();
     }
 
-    // 4. Trânsito Ao Vivo
+    // 4. Trânsito Ao Vivo discreto
     if (this.showTraffic) {
-      const trafficColors = ['rgba(16, 185, 129, 0.65)', 'rgba(245, 158, 11, 0.70)', 'rgba(239, 68, 68, 0.75)'];
+      const trafficColors = ['rgba(22, 163, 74, 0.38)', 'rgba(245, 158, 11, 0.68)', 'rgba(239, 68, 68, 0.75)'];
       for (let tc = 0; tc < 3; tc++) {
         octx.beginPath();
         let hasT = false;
@@ -2678,7 +3001,7 @@ export class PonteMapEngine {
         }
         if (hasT) {
           octx.strokeStyle = trafficColors[tc];
-          octx.lineWidth = 3.6;
+          octx.lineWidth = 2.2;
           octx.stroke();
         }
       }
