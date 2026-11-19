@@ -1004,7 +1004,33 @@ export default {
       });
     }
 
-    // ── 8. ROTA: LISTA DE PRAÇAS DE PEDÁGIO DO BRASIL ──
+    // ── 8. ROTA: VELOCIDADE POR MODAL (API DEDICADA PARA MOTORISTA E ACOMPANHANTE) ──
+    if (pathname === '/api/rotas/velocidade/modal') {
+      const velocidade = url.searchParams.get('velocidade');
+      const modal = url.searchParams.get('modal') || 'carro';
+      const limiteKmh = Number(url.searchParams.get('limiteKmh') || '50');
+      const placa = url.searchParams.get('placa') || 'BRA2E19';
+
+      const velocidadeGps = velocidade !== undefined ? Number(velocidade) : null;
+      const telemetria = calcularTelemetriaVelocidade({
+        modal,
+        velocidadeGps,
+        limiteKmh,
+        placa
+      });
+
+      return jsonResp({
+        valido: true,
+        modal,
+        velocidadeGps,
+        limiteKmh,
+        telemetria,
+        placa,
+        timestamp: Date.now()
+      });
+    }
+
+    // ── 9. ROTA: LISTA DE PRAÇAS DE PEDÁGIO DO BRASIL ──
     if (pathname === '/api/rotas/pedagios') {
       const uf = (url.searchParams.get('uf') || '').toUpperCase().trim();
       const lista = uf ? PRACAS_PEDAGIO_BRASIL.filter((p) => p.uf === uf) : PRACAS_PEDAGIO_BRASIL;
@@ -1028,7 +1054,8 @@ export default {
         'GET /api/mapas/dados-locais?lat=-23.5614&lng=-46.6558',
         'GET /api/mapas/sinalizacao/{x}/{y}.json (célula z12)',
         'GET /api/mapas/terreno/{z}/{x}/{y}.bin (grade Int16 128x128)',
-        'GET/POST /api/rotas/gps/celular?lat=-23.5614&lng=-46.6558&velocidade=45&modal=carro&limiteKmh=50'
+        'GET/POST /api/rotas/gps/celular?lat=-23.5614&lng=-46.6558&velocidade=45&modal=carro&limiteKmh=50',
+        'GET /api/rotas/velocidade/modal?modal=carro&velocidade=45&limiteKmh=50'
       ]
     }, 404);
   }
