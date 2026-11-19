@@ -673,12 +673,6 @@
                       <div id="map-search-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:rgba(15,23,42,0.97);border:1px solid rgba(255,255,255,0.16);border-radius:10px;max-height:220px;overflow-y:auto;z-index:40;box-shadow:0 14px 30px rgba(0,0,0,0.5);"></div>
                     </div>
                     <div class="map-layers-bar">
-                      <button class="map-layer-pill" id="btn-view-driver" title="Modo Motorista: Cockpit com rota, semáforos e velocidade (estilo Uber)">
-                        <i data-lucide="navigation" style="width:13px;height:13px;"></i> <span>Motorista 🚕</span>
-                      </button>
-                      <button class="map-layer-pill is-active" id="btn-view-passenger" title="Modo Acompanhante: Rota, ETA e posição do veículo (estilo iFood link)">
-                        <i data-lucide="users" style="width:13px;height:13px;"></i> <span>Acompanhante 👀</span>
-                      </button>
                       <button class="map-layer-pill" id="btn-layer-driver" title="Modo Motorista Cockpit (Seta ↑ ou tecla D)">
                         <i data-lucide="navigation" style="width:13px;height:13px;"></i> <span>Modo Motorista (↑)</span>
                       </button>
@@ -713,6 +707,12 @@
                         <i data-lucide="circle-dollar-sign" style="width:13px;height:13px;"></i> <span>Pedágios</span>
                       </button>
                       <button class="map-layer-pill" id="btn-layer-fullscreen" title="Expandir Mapa em Tela Cheia">
+                      <button class="map-layer-pill" id="btn-view-driver" title="Modo Motorista: Cockpit com rota, semáforos e velocidade (estilo Uber)">
+                        <i data-lucide="car" style="width:13px;height:13px;"></i> Motorista 🚕
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-view-passenger" title="Modo Acompanhante: Rota, ETA e posição do veículo (estilo iFood link)">
+                        <i data-lucide="eye" style="width:13px;height:13px;"></i> Acompanhante 👀
+                      </button>
                         <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
                       </button>
                     </div>
@@ -764,6 +764,8 @@
                     <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:#334155;border:1.5px solid #94a3b8;display:inline-block;"></span> Ponte / Viaduto</span>
                     <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
                     <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
+                  </div>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Lentidão / Trânsito</span>
                   </div>
 
                   <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
@@ -1259,31 +1261,6 @@
       mapEngine.set3D(btn.classList.contains('is-active'));
     });
 
-    // Seletor de Visão: Motorista vs Acompanhante
-    function setViewMode(isDriver) {
-      const btnDriver = document.getElementById('btn-view-driver');
-      const btnPassenger = document.getElementById('btn-view-passenger');
-      const hud = document.getElementById('map-live-gps-hud');
-      const isActive = isDriver ? btnDriver.classList.contains('is-active') : btnPassenger.classList.contains('is-active');
-      if (isActive) return; // já está neste modo
-
-      btnDriver.classList.toggle('is-active', isDriver);
-      btnPassenger.classList.toggle('is-active', !isDriver);
-
-      if (isDriver) {
-        mapEngine.setDriverMode(true, true);
-        if (hud) hud.style.display = 'block';
-        showToast('Modo Motorista Ativado — Cockpit com rota, semáforos e velocidade!');
-      } else {
-        mapEngine.setDriverMode(false, false);
-        if (hud) hud.style.display = 'none';
-        showToast('Modo Acompanhante — Acompanhe a entrega pelo link!');
-      }
-    }
-
-    document.getElementById('btn-view-driver')?.addEventListener('click', () => setViewMode(true));
-    document.getElementById('btn-view-passenger')?.addEventListener('click', () => setViewMode(false));
-
     document.getElementById('btn-layer-traffic')?.addEventListener('click', (e) => {
       const btn = e.currentTarget;
       btn.classList.toggle('is-active');
@@ -1348,6 +1325,31 @@
         }
       });
     });
+
+    // Seletor de Visão: Motorista vs Acompanhante
+    function setViewMode(isDriver) {
+      const btnDriver = document.getElementById('btn-view-driver');
+      const btnPassenger = document.getElementById('btn-view-passenger');
+      const hud = document.getElementById('map-live-gps-hud');
+      const isActive = isDriver ? btnDriver.classList.contains('is-active') : btnPassenger.classList.contains('is-active');
+      if (isActive) return; // já está neste modo
+
+      btnDriver.classList.toggle('is-active', isDriver);
+      btnPassenger.classList.toggle('is-active', !isDriver);
+
+      if (isDriver) {
+        mapEngine.setDriverMode(true, true);
+        if (hud) hud.style.display = 'block';
+        showToast('Modo Motorista Ativado — Cockpit com rota, semáforos e velocidade!');
+      } else {
+        mapEngine.setDriverMode(false, false);
+        if (hud) hud.style.display = 'none';
+        showToast('Modo Acompanhante — Acompanhe a entrega pelo link!');
+      }
+    }
+
+    document.getElementById('btn-view-driver')?.addEventListener('click', () => setViewMode(true));
+    document.getElementById('btn-view-passenger')?.addEventListener('click', () => setViewMode(false));
 
     document.getElementById('btn-layer-fullscreen')?.addEventListener('click', (e) => {
       const frame = document.getElementById('map-viewport-frame');

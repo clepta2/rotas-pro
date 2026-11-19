@@ -665,6 +665,12 @@ ${ponteIconsCode}
                         <i data-lucide="circle-dollar-sign" style="width:13px;height:13px;"></i> <span>Pedágios</span>
                       </button>
                       <button class="map-layer-pill" id="btn-layer-fullscreen" title="Expandir Mapa em Tela Cheia">
+                      <button class="map-layer-pill" id="btn-view-driver" title="Modo Motorista: Cockpit com rota, semáforos e velocidade (estilo Uber)">
+                        <i data-lucide="car" style="width:13px;height:13px;"></i> Motorista 🚕
+                      </button>
+                      <button class="map-layer-pill is-active" id="btn-view-passenger" title="Modo Acompanhante: Rota, ETA e posição do veículo (estilo iFood link)">
+                        <i data-lucide="eye" style="width:13px;height:13px;"></i> Acompanhante 👀
+                      </button>
                         <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
                       </button>
                     </div>
@@ -718,8 +724,6 @@ ${ponteIconsCode}
                     <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
                   </div>
                     <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Lentidão / Trânsito</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
                   </div>
 
                   <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
@@ -1279,6 +1283,31 @@ ${ponteIconsCode}
         }
       });
     });
+
+    // Seletor de Visão: Motorista vs Acompanhante
+    function setViewMode(isDriver) {
+      const btnDriver = document.getElementById('btn-view-driver');
+      const btnPassenger = document.getElementById('btn-view-passenger');
+      const hud = document.getElementById('map-live-gps-hud');
+      const isActive = isDriver ? btnDriver.classList.contains('is-active') : btnPassenger.classList.contains('is-active');
+      if (isActive) return; // já está neste modo
+
+      btnDriver.classList.toggle('is-active', isDriver);
+      btnPassenger.classList.toggle('is-active', !isDriver);
+
+      if (isDriver) {
+        mapEngine.setDriverMode(true, true);
+        if (hud) hud.style.display = 'block';
+        showToast('Modo Motorista Ativado — Cockpit com rota, semáforos e velocidade!');
+      } else {
+        mapEngine.setDriverMode(false, false);
+        if (hud) hud.style.display = 'none';
+        showToast('Modo Acompanhante — Acompanhe a entrega pelo link!');
+      }
+    }
+
+    document.getElementById('btn-view-driver')?.addEventListener('click', () => setViewMode(true));
+    document.getElementById('btn-view-passenger')?.addEventListener('click', () => setViewMode(false));
 
     document.getElementById('btn-layer-fullscreen')?.addEventListener('click', (e) => {
       const frame = document.getElementById('map-viewport-frame');
