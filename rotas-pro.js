@@ -15,7 +15,7 @@
  * @license MIT
  */
 
-import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js';
+import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js?v=4.1.0';
 
 // ─── 1. POLOS URBANOS, BAIRROS, AVENIDAS E AEROPORTOS (ALTA PRECISÃO) ───
 export const POLOS_URBANOS_BRASIL = {
@@ -153,8 +153,8 @@ const CAPITAIS_POR_UF = {
   MA: { cidade: 'São Luís', lat: -2.5307, lng: -44.3068, min: 65000000, max: 65999999 },
   PA: { cidade: 'Belém', lat: -1.4558, lng: -48.4902, min: 66000000, max: 68899999 },
   AP: { cidade: 'Macapá', lat: 0.0349, lng: -51.0694, min: 68900000, max: 68999999 },
-  AM: { cidade: 'Manaus', lat: -3.1190, lng: -60.0217, min: 69000000, max: 69899999 },
   RR: { cidade: 'Boa Vista', lat: 2.8235, lng: -60.6758, min: 69300000, max: 69399999 },
+  AM: { cidade: 'Manaus', lat: -3.1190, lng: -60.0217, min: 69000000, max: 69899999 },
   AC: { cidade: 'Rio Branco', lat: -9.9754, lng: -67.8249, min: 69900000, max: 69999999 },
   DF: { cidade: 'Brasília', lat: -15.7942, lng: -47.8825, min: 70000000, max: 73699999 },
   GO: { cidade: 'Goiânia', lat: -16.6869, lng: -49.2648, min: 73700000, max: 76799999 },
@@ -166,6 +166,102 @@ const CAPITAIS_POR_UF = {
   SC: { cidade: 'Florianópolis', lat: -27.5954, lng: -48.5480, min: 88000000, max: 89999999 },
   RS: { cidade: 'Porto Alegre', lat: -30.0346, lng: -51.2177, min: 90000000, max: 99999999 }
 };
+
+// Faixas postais regionais (prefixos de 2-3 dígitos dos Correios) para cidades do interior e regiões metropolitanas
+const FAIXAS_CEP_INTERIOR = [
+  // SP Interior & Litoral
+  { min: 6000000, max: 6499999, chave: 'osasco_sp', cidade: 'Osasco', uf: 'SP' },
+  { min: 7000000, max: 7399999, chave: 'guarulhos_sp', cidade: 'Guarulhos', uf: 'SP' },
+  { min: 9000000, max: 9299999, chave: 'santo andre_sp', cidade: 'Santo André', uf: 'SP' },
+  { min: 9600000, max: 9899999, chave: 'sao bernardo do campo_sp', cidade: 'São Bernardo do Campo', uf: 'SP' },
+  { min: 11000000, max: 11299999, chave: 'santos_sp', cidade: 'Santos', uf: 'SP' },
+  { min: 11300000, max: 11399999, chave: 'sao vicente_sp', cidade: 'São Vicente', uf: 'SP' },
+  { min: 11400000, max: 11499999, chave: 'guaruja_sp', cidade: 'Guarujá', uf: 'SP' },
+  { min: 11700000, max: 11729999, chave: 'praia grande_sp', cidade: 'Praia Grande', uf: 'SP' },
+  { min: 12000000, max: 12199999, chave: 'taubate_sp', cidade: 'Taubaté', uf: 'SP' },
+  { min: 12200000, max: 12299999, chave: 'sao jose dos campos_sp', cidade: 'São José dos Campos', uf: 'SP' },
+  { min: 12900000, max: 12939999, chave: 'braganca paulista_sp', cidade: 'Bragança Paulista', uf: 'SP' },
+  { min: 13000000, max: 13139999, chave: 'campinas_sp', cidade: 'Campinas', uf: 'SP' },
+  { min: 13200000, max: 13219999, chave: 'jundiai_sp', cidade: 'Jundiaí', uf: 'SP' },
+  { min: 13300000, max: 13319999, chave: 'itu_sp', cidade: 'Itu', uf: 'SP' },
+  { min: 13330000, max: 13349999, chave: 'indaiatuba_sp', cidade: 'Indaiatuba', uf: 'SP' },
+  { min: 13400000, max: 13439999, chave: 'piracicaba_sp', cidade: 'Piracicaba', uf: 'SP' },
+  { min: 13465000, max: 13479999, chave: 'americana_sp', cidade: 'Americana', uf: 'SP' },
+  { min: 13480000, max: 13489999, chave: 'limeira_sp', cidade: 'Limeira', uf: 'SP' },
+  { min: 13560000, max: 13579999, chave: 'sao carlos_sp', cidade: 'São Carlos', uf: 'SP' },
+  { min: 13600000, max: 13609999, chave: 'araras_sp', cidade: 'Araras', uf: 'SP' },
+  { min: 13870000, max: 13879999, chave: 'sao joao da boa vista_sp', cidade: 'São João da Boa Vista', uf: 'SP' },
+  { min: 14000000, max: 14109999, chave: 'ribeirao preto_sp', cidade: 'Ribeirão Preto', uf: 'SP' },
+  { min: 14400000, max: 14419999, chave: 'franca_sp', cidade: 'Franca', uf: 'SP' },
+  { min: 14800000, max: 14819999, chave: 'araraquara_sp', cidade: 'Araraquara', uf: 'SP' },
+  { min: 15000000, max: 15109999, chave: 'sao jose do rio preto_sp', cidade: 'São José do Rio Preto', uf: 'SP' },
+  { min: 16000000, max: 16099999, chave: 'aracatuba_sp', cidade: 'Araçatuba', uf: 'SP' },
+  { min: 17000000, max: 17109999, chave: 'bauru_sp', cidade: 'Bauru', uf: 'SP' },
+  { min: 17500000, max: 17539999, chave: 'marilia_sp', cidade: 'Marília', uf: 'SP' },
+  { min: 18000000, max: 18109999, chave: 'sorocaba_sp', cidade: 'Sorocaba', uf: 'SP' },
+  { min: 19000000, max: 19069999, chave: 'presidente prudente_sp', cidade: 'Presidente Prudente', uf: 'SP' },
+  // RJ Interior
+  { min: 24000000, max: 24399999, chave: 'niteroi_rj', cidade: 'Niterói', uf: 'RJ' },
+  { min: 24400000, max: 24799999, chave: 'sao goncalo_rj', cidade: 'São Gonçalo', uf: 'RJ' },
+  { min: 25000000, max: 25299999, chave: 'duque de caxias_rj', cidade: 'Duque de Caxias', uf: 'RJ' },
+  { min: 25600000, max: 25799999, chave: 'petropolis_rj', cidade: 'Petrópolis', uf: 'RJ' },
+  { min: 27200000, max: 27299999, chave: 'volta redonda_rj', cidade: 'Volta Redonda', uf: 'RJ' },
+  { min: 28000000, max: 28199999, chave: 'campos dos goytacazes_rj', cidade: 'Campos dos Goytacazes', uf: 'RJ' },
+  { min: 28900000, max: 28949999, chave: 'cabo frio_rj', cidade: 'Cabo Frio', uf: 'RJ' },
+  // ES Interior
+  { min: 29100000, max: 29129999, chave: 'vila velha_es', cidade: 'Vila Velha', uf: 'ES' },
+  { min: 29160000, max: 29184999, chave: 'serra_es', cidade: 'Serra', uf: 'ES' },
+  // MG Interior
+  { min: 32000000, max: 32399999, chave: 'contagem_mg', cidade: 'Contagem', uf: 'MG' },
+  { min: 32500000, max: 32699999, chave: 'betim_mg', cidade: 'Betim', uf: 'MG' },
+  { min: 35000000, max: 35099999, chave: 'governador valadares_mg', cidade: 'Governador Valadares', uf: 'MG' },
+  { min: 35160000, max: 35169999, chave: 'ipatinga_mg', cidade: 'Ipatinga', uf: 'MG' },
+  { min: 35500000, max: 35509999, chave: 'divinopolis_mg', cidade: 'Divinópolis', uf: 'MG' },
+  { min: 36000000, max: 36109999, chave: 'juiz de fora_mg', cidade: 'Juiz de Fora', uf: 'MG' },
+  { min: 37000000, max: 37099999, chave: 'varginha_mg', cidade: 'Varginha', uf: 'MG' },
+  { min: 37700000, max: 37719999, chave: 'pocos de caldas_mg', cidade: 'Poços de Caldas', uf: 'MG' },
+  { min: 38000000, max: 38099999, chave: 'uberaba_mg', cidade: 'Uberaba', uf: 'MG' },
+  { min: 38400000, max: 38439999, chave: 'uberlandia_mg', cidade: 'Uberlândia', uf: 'MG' },
+  { min: 39400000, max: 39409999, chave: 'montes claros_mg', cidade: 'Montes Claros', uf: 'MG' },
+  // BA / NE Interior
+  { min: 44000000, max: 44149999, chave: 'feira de santana_ba', cidade: 'Feira de Santana', uf: 'BA' },
+  { min: 45000000, max: 45099999, chave: 'vitoria da conquista_ba', cidade: 'Vitória da Conquista', uf: 'BA' },
+  { min: 45600000, max: 45619999, chave: 'itabuna_ba', cidade: 'Itabuna', uf: 'BA' },
+  { min: 45650000, max: 45669999, chave: 'ilheus_ba', cidade: 'Ilhéus', uf: 'BA' },
+  { min: 55000000, max: 55049999, chave: 'caruaru_pe', cidade: 'Caruaru', uf: 'PE' },
+  { min: 56300000, max: 56339999, chave: 'petrolina_pe', cidade: 'Petrolina', uf: 'PE' },
+  { min: 58400000, max: 58449999, chave: 'campina grande_pb', cidade: 'Campina Grande', uf: 'PB' },
+  { min: 59600000, max: 59649999, chave: 'mossoro_rn', cidade: 'Mossoró', uf: 'RN' },
+  { min: 63000000, max: 63049999, chave: 'juazeiro do norte_ce', cidade: 'Juazeiro do Norte', uf: 'CE' },
+  { min: 65900000, max: 65929999, chave: 'imperatriz_ma', cidade: 'Imperatriz', uf: 'MA' },
+  // N / CO Interior
+  { min: 68000000, max: 68049999, chave: 'santarem_pa', cidade: 'Santarém', uf: 'PA' },
+  { min: 68500000, max: 68514999, chave: 'maraba_pa', cidade: 'Marabá', uf: 'PA' },
+  { min: 75000000, max: 75159999, chave: 'anapolis_go', cidade: 'Anápolis', uf: 'GO' },
+  { min: 75900000, max: 75919999, chave: 'rio verde_go', cidade: 'Rio Verde', uf: 'GO' },
+  { min: 78550000, max: 78559999, chave: 'sinop_mt', cidade: 'Sinop', uf: 'MT' },
+  { min: 78700000, max: 78749999, chave: 'rondonopolis_mt', cidade: 'Rondonópolis', uf: 'MT' },
+  { min: 79800000, max: 79849999, chave: 'dourados_ms', cidade: 'Dourados', uf: 'MS' },
+  // Sul Interior
+  { min: 83000000, max: 83099999, chave: 'sao jose dos pinhais_pr', cidade: 'São José dos Pinhais', uf: 'PR' },
+  { min: 84000000, max: 84099999, chave: 'ponta grossa_pr', cidade: 'Ponta Grossa', uf: 'PR' },
+  { min: 85800000, max: 85819999, chave: 'cascavel_pr', cidade: 'Cascavel', uf: 'PR' },
+  { min: 85850000, max: 85879999, chave: 'foz do iguacu_pr', cidade: 'Foz do Iguaçu', uf: 'PR' },
+  { min: 86000000, max: 86099999, chave: 'londrina_pr', cidade: 'Londrina', uf: 'PR' },
+  { min: 87000000, max: 87099999, chave: 'maringa_pr', cidade: 'Maringá', uf: 'PR' },
+  { min: 88300000, max: 88319999, chave: 'itajai_sc', cidade: 'Itajaí', uf: 'SC' },
+  { min: 88330000, max: 88339999, chave: 'balneario camboriu_sc', cidade: 'Balneário Camboriú', uf: 'SC' },
+  { min: 88800000, max: 88819999, chave: 'criciuma_sc', cidade: 'Criciúma', uf: 'SC' },
+  { min: 89000000, max: 89079999, chave: 'blumenau_sc', cidade: 'Blumenau', uf: 'SC' },
+  { min: 89200000, max: 89239999, chave: 'joinville_sc', cidade: 'Joinville', uf: 'SC' },
+  { min: 89800000, max: 89819999, chave: 'chapeco_sc', cidade: 'Chapecó', uf: 'SC' },
+  { min: 92000000, max: 92499999, chave: 'canoas_rs', cidade: 'Canoas', uf: 'RS' },
+  { min: 93300000, max: 93599999, chave: 'novo hamburgo_rs', cidade: 'Novo Hamburgo', uf: 'RS' },
+  { min: 95000000, max: 95139999, chave: 'caxias do sul_rs', cidade: 'Caxias do Sul', uf: 'RS' },
+  { min: 96000000, max: 96099999, chave: 'pelotas_rs', cidade: 'Pelotas', uf: 'RS' },
+  { min: 97000000, max: 97119999, chave: 'santa maria_rs', cidade: 'Santa Maria', uf: 'RS' },
+  { min: 99000000, max: 99099999, chave: 'passo fundo_rs', cidade: 'Passo Fundo', uf: 'RS' }
+];
 
 // ─── 5. UTILITÁRIOS MATEMÁTICOS E GEODÉSICOS (ZERO REGEX PESADO) ───
 
@@ -301,10 +397,11 @@ export function geocodificarLocal(entrada) {
       };
     }
 
-    // Interpolação determinística por faixa de CEP dentro da UF/Capital
+    // Interpolação determinística por faixa de CEP (prioriza cidades do interior/RM antes da capital da UF)
     const numCep = parseInt(digitos, 10);
     let ufEncontrada = 'SP';
     let infoCap = CAPITAIS_POR_UF.SP;
+    let codigoIbgeCep = '3550308';
     for (const [ufKey, cap] of Object.entries(CAPITAIS_POR_UF)) {
       if (numCep >= cap.min && numCep <= cap.max) {
         ufEncontrada = ufKey;
@@ -312,12 +409,21 @@ export function geocodificarLocal(entrada) {
         break;
       }
     }
+    for (const fx of FAIXAS_CEP_INTERIOR) {
+      if (numCep >= fx.min && numCep <= fx.max && GEO_MUNICIPIOS_NOME[fx.chave]) {
+        const [mLat, mLng, , mIbge] = GEO_MUNICIPIOS_NOME[fx.chave];
+        ufEncontrada = fx.uf;
+        infoCap = { cidade: fx.cidade, lat: mLat, lng: mLng };
+        codigoIbgeCep = mIbge;
+        break;
+      }
+    }
 
-    // Deslocamento determinístico suave dentro da malha metropolitana baseado nos dígitos do setor postal
+    // Deslocamento determinístico suave dentro da malha urbana baseado nos dígitos do setor postal
     const setor = (numCep % 100000) / 100000;
     const subsetor = (numCep % 1000) / 1000;
-    const dLat = (setor - 0.5) * 0.14;
-    const dLng = (subsetor - 0.5) * 0.14;
+    const dLat = (setor - 0.5) * 0.06;
+    const dLng = (subsetor - 0.5) * 0.06;
     const latFinal = Number((infoCap.lat + dLat).toFixed(6));
     const lngFinal = Number((infoCap.lng + dLng).toFixed(6));
     const cepFmt = `${digitos.slice(0, 5)}-${digitos.slice(5)}`;
@@ -333,7 +439,7 @@ export function geocodificarLocal(entrada) {
       cidade: infoCap.cidade,
       uf: ufEncontrada,
       cep: cepFmt,
-      codigoIbge: '3550308'
+      codigoIbge: codigoIbgeCep
     };
   }
 

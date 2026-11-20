@@ -336,6 +336,26 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
     }
   }
   assert(inversoesSinal <= 2, `Rota longa fora de corredor não deve fazer zigue-zague em escada (inversões: ${inversoesSinal})`);
+
+  // Teste de cobertura nacional de CEPs do interior e cobertura HQ multi-zoom
+  const cepBauru = geocodificarLocal('17010-000');
+  assert(cepBauru.valido && cepBauru.cidade === 'Bauru' && cepBauru.uf === 'SP', `CEP 17010-000 deve resolver para Bauru/SP (obtido: ${cepBauru.cidade}/${cepBauru.uf})`);
+  const cepLondrina = geocodificarLocal('86010-000');
+  assert(cepLondrina.valido && cepLondrina.cidade === 'Londrina' && cepLondrina.uf === 'PR', `CEP 86010-000 deve resolver para Londrina/PR (obtido: ${cepLondrina.cidade}/${cepLondrina.uf})`);
+  const cepBoaVista = geocodificarLocal('69301-000');
+  assert(cepBoaVista.valido && cepBoaVista.cidade === 'Boa Vista' && cepBoaVista.uf === 'RR', `CEP 69301-000 deve resolver para Boa Vista/RR (obtido: ${cepBoaVista.cidade}/${cepBoaVista.uf})`);
+
+  const cobBrasil = resumirCoberturaViewport({
+    lat: -22.3145,
+    lng: -49.0587,
+    zoom: 15.5,
+    width: 800,
+    height: 600,
+    tileZoom: 14,
+    index: { 14: new Set(), 10: new Set(['372/577']), 8: new Set(['93/144']) },
+    fallbackZooms: [13, 12, 10, 8, 6]
+  });
+  assert(cobBrasil.percent === 100 && cobBrasil.fallback > 0, `Cobertura nacional deve usar fallback ancestral até z6/z8/z10 (${cobBrasil.percent}%)`);
 }
 
 console.log('\n========================================');

@@ -241,7 +241,7 @@ export class PonteMapEngine {
   }
 
   setZoom(newZoom) {
-    this.zoom = Math.max(4, Math.min(21.0, newZoom));
+    this.zoom = Math.max(4, Math.min(22.0, newZoom));
     this.targetZoom = this.zoom;
     this.zoomAnchor = null;
     if (this.onZoomChange) this.onZoomChange(this.zoom);
@@ -253,7 +253,7 @@ export class PonteMapEngine {
     if (this.driverMode) {
       this.followVehicle = true;
       this.headingUp = Boolean(headingUp);
-      this.setZoom(Math.max(19.0, this.zoom));
+      this.setZoom(Math.max(20.0, this.zoom));
     } else {
       this.headingUp = false;
       this.cameraAngle = 0;
@@ -933,7 +933,7 @@ export class PonteMapEngine {
         bldg: '#e9ecef', bldgStroke: '#d1d5db', bldgTop: '#f1f3f4', bldgWall: '#d1d5db', bldgShadow: 'rgba(0,0,0,0.08)',
         roads: {
           motorway: ['#c2410c', '#fbbf24'], trunk: ['#d97706', '#fcd34d'], primary: ['#b45309', '#fef08a'],
-          secondary: ['#94a3b8', '#ffffff'], tertiary: ['#94a3b8', '#ffffff'], minor: ['#cbd5e1', '#ffffff'],
+          secondary: ['#64748b', '#ffffff'], tertiary: ['#64748b', '#ffffff'], minor: ['#cbd5e1', '#ffffff'],
           service: ['#e2e8f0', '#ffffff'], track: ['#cbd5e1', '#fbfaf7'], path: [null, '#cbd5e1'],
           raceway: ['#cbd5e1', '#ffe4e6'], busway: ['#7c3aed', '#ede9fe']
         },
@@ -951,12 +951,12 @@ export class PonteMapEngine {
         wood: '#0b2922', grass: '#0d332a', park: '#0f3d32', cemetery: '#0f2420', sand: '#1e2424',
         wetland: '#0c2433', hospital: '#3b0718', school: '#2e1c12', sport: '#0d332a', parking: '#1e293b'
       },
-      water: '#0a1929', waterLine: '#335c81', canalWall: '#475569', aero: '#1e293b',
+      water: '#0c2340', waterLine: '#255485', canalWall: '#475569', aero: '#1e293b',
       bldg: '#1e293b', bldgStroke: '#334155', bldgTop: '#243048', bldgWall: '#111827', bldgShadow: 'rgba(0,0,0,0.40)',
       roads: {
-        motorway: ['#7c2d12', '#f59e0b'], trunk: ['#854d0e', '#eab308'], primary: ['#0f172a', '#94a3b8'],
-        secondary: ['#090e17', '#475569'], tertiary: ['#090e17', '#334155'], minor: ['#090e17', '#263244'],
-        service: ['#090e17', '#172033'], track: ['#090e17', '#292524'], path: [null, '#334155'],
+        motorway: ['#7c2d12', '#f59e0b'], trunk: ['#854d0e', '#eab308'], primary: ['#334155', '#94a3b8'],
+        secondary: ['#090e17', '#475569'], tertiary: ['#090e17', '#3b4a66'], minor: ['#090e17', '#2b3954'],
+        service: ['#090e17', '#222e45'], track: ['#090e17', '#292524'], path: [null, '#3b4a66'],
         raceway: ['#090e17', '#3b0724'], busway: ['#0f172a', '#a855f7']
       },
       tunnelAlpha: 0.4, bridgeCasing: '#64748b', bridgeShadow: 'rgba(0, 0, 0, 0.60)',
@@ -998,12 +998,12 @@ export class PonteMapEngine {
     }
     // Estilo Uber / Waze Night Pro (Alto Contraste Cartográfico)
     return {
-      bg: '#090e17',
-      land: '#090e17',
-      stateBorder: '#334155',
-      urban: '#0f172a',
-      water: '#0a1929',
-      waterLine: '#335c81',
+      bg: '#071322',
+      land: '#101829',
+      stateBorder: '#3b4f73',
+      urban: '#172238',
+      water: '#071322',
+      waterLine: '#255485',
       park: '#0f3d32',
       parkText: '#34d399',
       bldgFill: '#1e293b',
@@ -1083,9 +1083,9 @@ export class PonteMapEngine {
       ctx.restore();
     }
 
-    // 2.8 Rios, Rodovias Nacionais e Fronteiras Estaduais SEMPRE acima do relevo
+    // 2.8 Fronteiras Estaduais (e Rios/Rodovias Nacionais quando HQ não está ativo) SEMPRE acima do relevo
     if (showBrasilBase && this.brasilGeo) {
-      this._renderBrasilGeo(ctx, pal, 'overlay');
+      this._renderBrasilGeo(ctx, pal, hqOn ? 'borders' : 'overlay');
     }
 
     // 3. Vias, ferrovias e edifícios: HQ v2 (nítido) ou tiles legados
@@ -1183,12 +1183,14 @@ export class PonteMapEngine {
       ? `falha ao carregar índice (${error})`
       : (index ? null : 'carregando índice');
     const details = [];
-    if (this.zoom >= 10.5) {
+    if (this.zoom >= 6.0) {
       const state = loadState(this.hqIndex, this.hqIndexError);
+      const hqZ = this._hqTileZoom();
+      const fbZooms = [13, 12, 10, 8, 6].filter((z) => z < hqZ);
       details.push(`Ruas HQ: ${state || describe(resumirCoberturaViewport({
         lat: this.lat, lng: this.lng, zoom: this.zoom, width: this.width, height: this.height,
-        tileZoom: this._hqTileZoom(), index: this.hqIndex,
-        fallbackZooms: [this._hqTileZoom() - 1, this._hqTileZoom() - 2]
+        tileZoom: hqZ, index: this.hqIndex,
+        fallbackZooms: fbZooms
       }))}`);
     } else {
       details.push('Ruas HQ: aproxime o zoom para verificar');
@@ -1938,22 +1940,26 @@ export class PonteMapEngine {
   _hqRoadWidth(cls) {
     // Largura em px no zoom 16 (proporcional à largura real da via no padrão Google Maps)
     const W = {
-      motorway: [14, 2.8], trunk: [13, 2.5], primary: [12, 2.2], secondary: [10, 1.8], tertiary: [8.5, 1.4],
-      minor: [7, 1.0], service: [4.5, 0.7], track: [3.5, 0.5], raceway: [6, 0.8], busway: [6.5, 0.8]
+      motorway: [18, 3.2], trunk: [16, 2.8], primary: [14, 2.4], secondary: [12, 2.0], tertiary: [10, 1.6],
+      minor: [8.5, 1.2], service: [5.5, 0.9], track: [4.5, 0.6], raceway: [7, 1.0], busway: [7.5, 1.0]
     };
     const base = cls.endsWith('_l') ? cls.slice(0, -2) : cls;
     const [w16, min] = W[base] || W.minor;
-    const w = Math.max(min, w16 * Math.pow(2, this.zoom - 16));
+    const effMin = this.zoom < 10 ? min * 0.55 : min;
+    const w = Math.max(effMin, w16 * Math.pow(2, this.zoom - 16));
     return cls.endsWith('_l') ? w * 0.75 : w;
   }
 
   _hqTileZoom() {
-    if (this.zoom >= 14.4) return 14;
-    if (this.zoom >= 12.9) return 13;
-    return 12;
+    if (this.zoom >= 14.2) return 14;
+    if (this.zoom >= 12.8) return 13;
+    if (this.zoom >= 11.2) return 12;
+    if (this.zoom >= 9.2) return 10;
+    if (this.zoom >= 7.2) return 8;
+    return 6;
   }
 
-  // Retorna lista de tiles visíveis com o melhor tile carregado (próprio ou ancestral)
+  // Retorna lista de tiles visíveis com o melhor tile carregado (próprio ou ancestral até z6)
   _hqVisibleTiles() {
     const tz = this._hqTileZoom();
     const scale = 256 * Math.pow(2, this.zoom - tz);
@@ -1972,20 +1978,24 @@ export class PonteMapEngine {
       for (let ty = minTy; ty <= maxTy; ty++) wanted.push({ tx, ty, d: (tx - cx) ** 2 + (ty - cy) ** 2 });
     }
     wanted.sort((a, b) => a.d - b.d);
+    const ancestors = [13, 12, 10, 8, 6].filter((z) => z < tz);
+
     for (const { tx, ty } of wanted) {
       const rect = { x: tx * scale - tlx, y: ty * scale - tly, s: scale };
       if (!this._hasHq(tz, tx, ty)) {
-        // Sem tile HQ neste zoom: tenta ancestral semeado
+        // Sem tile HQ neste zoom: busca o melhor ancestral semeado (z13 -> z12 -> z10 -> z8 -> z6)
         let found = false;
-        for (let up = 1; up <= 2 && !found; up++) {
-          const az = tz - up; const ax = tx >> up; const ay = ty >> up;
-          if (az < 12 || !this._hasHq(az, ax, ay)) continue;
+        for (const az of ancestors) {
+          const shift = tz - az;
+          const ax = tx >> shift; const ay = ty >> shift;
+          if (!this._hasHq(az, ax, ay)) continue;
           const t = this.hqCache.get(`${az}/${ax}/${ay}`);
           if (t === undefined) this._fetchHq(az, ax, ay);
           if (t) {
-            const as = scale * Math.pow(2, up);
+            const as = scale * Math.pow(2, shift);
             out.push({ key: `${az}/${ax}/${ay}`, tile: t, ox: ax * as - tlx, oy: ay * as - tly, s: as, clip: rect });
             found = true;
+            break;
           }
         }
         continue;
@@ -1998,11 +2008,12 @@ export class PonteMapEngine {
         continue;
       }
       // Enquanto carrega: desenha o ancestral já em cache (sem tela vazia durante o pan)
-      for (let up = 1; up <= 2; up++) {
-        const az = tz - up; const ax = tx >> up; const ay = ty >> up;
+      for (const az of ancestors) {
+        const shift = tz - az;
+        const ax = tx >> shift; const ay = ty >> shift;
         const at = this.hqCache.get(`${az}/${ax}/${ay}`);
         if (at) {
-          const as = scale * Math.pow(2, up);
+          const as = scale * Math.pow(2, shift);
           out.push({ key: `${az}/${ax}/${ay}`, tile: at, ox: ax * as - tlx, oy: ay * as - tly, s: as, clip: rect });
           break;
         }
@@ -2024,11 +2035,17 @@ export class PonteMapEngine {
   }
 
   _hqActive() {
-    if (this.zoom < 10.5) return false;
+    if (this.zoom < 6.0) return false;
     if (!this.hqIndex) { this._loadHqIndex(); return false; }
     const tz = this._hqTileZoom();
     const c = PonteMapEngine.tileOf(this.lat, this.lng, tz);
-    return this._hasHq(tz, c.x, c.y) || this._hasHq(12, c.x >> (tz - 12), c.y >> (tz - 12));
+    if (this._hasHq(tz, c.x, c.y)) return true;
+    for (const az of [13, 12, 10, 8, 6]) {
+      if (az >= tz) continue;
+      const shift = tz - az;
+      if (this._hasHq(az, c.x >> shift, c.y >> shift)) return true;
+    }
+    return false;
   }
 
   _renderHqBase(ctx, hp, tiles, budget) {
@@ -2114,9 +2131,13 @@ export class PonteMapEngine {
             const col = casingColor || (hp.roads[base] || hp.roads.minor)[0];
             if (!col) continue;
             const w = this._hqRoadWidth(k);
+            // Casing mais grosso para vias principais → contraste estilo Google Maps
             ctx.strokeStyle = col;
-            ctx.lineWidth = (w + Math.max(1.4, Math.min(3.4, w * 0.20)) * 2) / u;
+            ctx.lineWidth = (w + Math.max(1.6, Math.min(4.0, w * 0.25)) * 2) / u;
+            ctx.shadowBlur = base === 'motorway' ? Math.max(4, 8 * Math.pow(2, this.zoom - 16)) / u : 0;
+            ctx.shadowColor = col;
             ctx.stroke(p);
+            ctx.shadowBlur = 0;
           }
         }
         for (const k of order) {
@@ -2388,7 +2409,7 @@ export class PonteMapEngine {
     // Reserva o canto da escala e o perfil altimétrico
     occupy(70, this.height - 16, 140, 30);
 
-    // 1. Bairros / localidades
+    // 1. Cidades, vilas e bairros
     if (this.zoom < 15.8) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -2396,12 +2417,15 @@ export class PonteMapEngine {
       for (const it of tiles) {
         for (const pl of it.tile.place) {
           if (seen.has(pl.n)) continue;
-          const big = pl.k === 'city' || pl.k === 'town';
-          if (!big && this.zoom < 12.8) continue;
+          const isCity = pl.k === 'city';
+          const isTown = pl.k === 'town';
+          if (this.zoom < 8.5 && !isCity) continue;
+          if (this.zoom < 12.8 && !isCity && !isTown) continue;
+          const big = isCity || isTown;
           const [x, y] = toScr(it, pl.p[0], pl.p[1]);
           if (!inView(x, y, 30)) continue;
           const txt = big ? pl.n : pl.n.toUpperCase();
-          ctx.font = big ? `800 15px ${font}` : `700 10.5px ${font}`;
+          ctx.font = isCity ? `800 14px ${font}` : (isTown ? `700 12px ${font}` : `700 10.5px ${font}`);
           const w = ctx.measureText(txt).width + (big ? 0 : txt.length * 1.2);
           if (occupied(x, y, w + 8, 18)) continue;
           occupy(x, y, w + 8, 18);
@@ -2816,7 +2840,7 @@ export class PonteMapEngine {
     }
 
     // Passo 2 (overlay): fronteiras estaduais, rios e rodovias nacionais (acima do relevo)
-    if (pass === 'all' || pass === 'overlay') {
+    if (pass === 'all' || pass === 'overlay' || pass === 'borders') {
       if (g.ufs) {
         ctx.beginPath();
         for (const uf of g.ufs) {
@@ -2832,7 +2856,7 @@ export class PonteMapEngine {
         ctx.stroke();
       }
 
-      if (g.rivers) {
+      if (pass !== 'borders' && g.rivers) {
         ctx.beginPath();
         for (const r of g.rivers) {
           if (!inBbox(r)) continue;
@@ -2850,7 +2874,7 @@ export class PonteMapEngine {
         ctx.stroke();
       }
 
-      if (g.roads) {
+      if (pass !== 'borders' && g.roads) {
         ctx.beginPath();
         for (const rd of g.roads) {
           if (!inBbox(rd)) continue;
@@ -3145,15 +3169,20 @@ export class PonteMapEngine {
         ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
         for (const { tile, sx, sy, size } of activeTiles) {
           for (const poi of tile.poi) {
-            if (!poi.p || !poi.n) continue;
-            const [px, py] = toPx(poi.p, sx, sy, size);
+            // Suporta formato sintético (poi.nome / poi.tipo, poi.x/poi.y) e formato HQ (poi.n / poi.cls / poi.p = [x, y])
+            const poiName = poi.n != null ? poi.n : poi.nome;
+            if (!poiName) continue;
+            const pp = poi.p ? poi.p : (poi.x != null && poi.y != null ? [poi.x, poi.y] : null);
+            if (!pp || pp.length < 2) continue;
+            const [px, py] = toPx(pp, sx, sy, size);
             if (!canPlace(px, py, 105, 24)) continue;
             placedLabels.push({ x: px, y: py });
 
             let dotColor = '#38bdf8';
-            if (poi.cls === 'hospital') dotColor = '#ef4444';
-            else if (poi.cls === 'park') dotColor = '#10b981';
-            else if (poi.cls === 'railway' || poi.cls === 'bus') dotColor = '#8b5cf6';
+            const cls = poi.cls != null ? poi.cls : poi.tipo;
+            if (cls === 'hospital') dotColor = '#ef4444';
+            else if (cls === 'park') dotColor = '#10b981';
+            else if (cls === 'railway' || cls === 'bus') dotColor = '#8b5cf6';
 
             ctx.beginPath();
             ctx.arc(px, py, 4.5, 0, Math.PI * 2);
@@ -3165,9 +3194,9 @@ export class PonteMapEngine {
 
             ctx.lineWidth = 3;
             ctx.strokeStyle = pal.roadTextHalo;
-            ctx.strokeText(poi.n.slice(0, 22), px, py - 11);
+            ctx.strokeText(poiName.slice(0, 22), px, py - 11);
             ctx.fillStyle = pal.poiText;
-            ctx.fillText(poi.n.slice(0, 22), px, py - 11);
+            ctx.fillText(poiName.slice(0, 22), px, py - 11);
           }
         }
       }

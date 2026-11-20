@@ -12,7 +12,9 @@
  */
 
 import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG, MAPS_ENGINE_JS } from './site-assets.js';
+import { MUNICIPIOS_GEO_JS } from './municipios-geo-assets.js';
 import { rotearPorMalhaRealR2, deg2num } from './astar-routing.js';
+import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js';
 import {
   geocodificarLocal,
   geocodificarReverso,
@@ -42,13 +44,7 @@ import {
 let memLojasCache = null;
 
 function gerarTileSinteticoLocal(z, x, y) {
-  const seed = (Number(x) * 31 + Number(y) * 17 + Number(z)) % 97;
-  const road = [];
-  for (let i = 150; i <= 850; i += 200) {
-    road.push({ c: [[[0, i], [1000, i + ((seed % 3) - 1) * 20]]], cls: i === 550 ? 'primary' : 'minor', ow: 0 });
-    road.push({ c: [[[i, 0], [i + ((seed % 2) ? 15 : -15), 1000]]], cls: i === 350 ? 'secondary' : 'minor', ow: 0 });
-  }
-  return { water: [], park: [], building: [], road, poi: [], place: [], sintetico: true };
+  return { water: [], park: [], building: [], road: [], poi: [], place: [], sintetico: true };
 }
 
 async function lerTileR2(env, z, x, y) {
@@ -174,7 +170,43 @@ const CAPITAIS_E_POLOS_BR = [
   { nome: 'Uberlândia', lat: -18.9186, lng: -48.2772, cap: false },
   { nome: 'Londrina', lat: -23.3045, lng: -51.1696, cap: false },
   { nome: 'Joinville', lat: -26.3045, lng: -48.8487, cap: false },
-  { nome: 'Caxias do Sul', lat: -29.1678, lng: -51.1794, cap: false }
+  { nome: 'Caxias do Sul', lat: -29.1678, lng: -51.1794, cap: false },
+  { nome: 'Bauru', lat: -22.3246, lng: -49.0871, cap: false },
+  { nome: 'São José do Rio Preto', lat: -20.8113, lng: -49.3758, cap: false },
+  { nome: 'Piracicaba', lat: -22.7338, lng: -47.6476, cap: false },
+  { nome: 'Jundiaí', lat: -23.1857, lng: -46.8978, cap: false },
+  { nome: 'Presidente Prudente', lat: -22.1207, lng: -51.3925, cap: false },
+  { nome: 'Marília', lat: -22.2171, lng: -49.9501, cap: false },
+  { nome: 'Juiz de Fora', lat: -21.7642, lng: -43.3503, cap: false },
+  { nome: 'Montes Claros', lat: -16.7282, lng: -43.8578, cap: false },
+  { nome: 'Uberaba', lat: -19.7472, lng: -47.9381, cap: false },
+  { nome: 'Governador Valadares', lat: -18.8545, lng: -41.9555, cap: false },
+  { nome: 'Campos dos Goytacazes', lat: -21.7622, lng: -41.3181, cap: false },
+  { nome: 'Petrópolis', lat: -22.5112, lng: -43.1779, cap: false },
+  { nome: 'Feira de Santana', lat: -12.2664, lng: -38.9663, cap: false },
+  { nome: 'Vitória da Conquista', lat: -14.8619, lng: -40.8442, cap: false },
+  { nome: 'Ilhéus', lat: -14.7935, lng: -39.0464, cap: false },
+  { nome: 'Caruaru', lat: -8.2845, lng: -35.9699, cap: false },
+  { nome: 'Petrolina', lat: -9.3891, lng: -40.5027, cap: false },
+  { nome: 'Campina Grande', lat: -7.2307, lng: -35.8817, cap: false },
+  { nome: 'Mossoró', lat: -5.1875, lng: -37.3442, cap: false },
+  { nome: 'Juazeiro do Norte', lat: -7.2131, lng: -39.3153, cap: false },
+  { nome: 'Imperatriz', lat: -5.5185, lng: -47.4777, cap: false },
+  { nome: 'Santarém', lat: -2.4385, lng: -54.6996, cap: false },
+  { nome: 'Marabá', lat: -5.3686, lng: -49.1178, cap: false },
+  { nome: 'Anápolis', lat: -16.3285, lng: -48.9534, cap: false },
+  { nome: 'Rondonópolis', lat: -16.4673, lng: -54.6372, cap: false },
+  { nome: 'Sinop', lat: -11.8604, lng: -55.5091, cap: false },
+  { nome: 'Dourados', lat: -22.2231, lng: -54.8120, cap: false },
+  { nome: 'Maringá', lat: -23.4205, lng: -51.9333, cap: false },
+  { nome: 'Cascavel', lat: -24.9578, lng: -53.4595, cap: false },
+  { nome: 'Foz do Iguaçu', lat: -25.5163, lng: -54.5854, cap: false },
+  { nome: 'Ponta Grossa', lat: -25.0916, lng: -50.1668, cap: false },
+  { nome: 'Blumenau', lat: -26.9194, lng: -49.0661, cap: false },
+  { nome: 'Chapecó', lat: -27.1004, lng: -52.6152, cap: false },
+  { nome: 'Pelotas', lat: -31.7654, lng: -52.3376, cap: false },
+  { nome: 'Santa Maria', lat: -29.6842, lng: -53.8069, cap: false },
+  { nome: 'Passo Fundo', lat: -28.2628, lng: -52.4067, cap: false }
 ];
 
 const CORS_HEADERS = {
@@ -322,6 +354,11 @@ export default {
     }
     if (pathname === '/ponte-maps-engine.js') {
       return new Response(MAPS_ENGINE_JS, {
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' }
+      });
+    }
+    if (pathname === '/municipios_geo.js') {
+      return new Response(MUNICIPIOS_GEO_JS, {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' }
       });
     }
@@ -611,6 +648,25 @@ export default {
           }
         } catch (_) {}
       }
+      if (results.length < 12) {
+        const exactMatches = [];
+        const prefixMatches = [];
+        const partialMatches = [];
+        for (const [k, val] of Object.entries(GEO_MUNICIPIOS_NOME)) {
+          const [cid, uf] = k.split('_');
+          if (cid === q) exactMatches.push([cid, uf, val]);
+          else if (cid.startsWith(q)) prefixMatches.push([cid, uf, val]);
+          else if (cid.includes(q)) partialMatches.push([cid, uf, val]);
+        }
+        for (const [cid, uf, val] of [...exactMatches, ...prefixMatches, ...partialMatches]) {
+          const nomeFmt = cid.replace(/\b\w/g, (c) => c.toUpperCase());
+          const dup = results.some((r) => r.c && r.c.toLowerCase().startsWith(cid) && Math.abs(r.lat - val[0]) < 0.15);
+          if (!dup) {
+            results.unshift({ n: `${nomeFmt} / ${uf.toUpperCase()}`, c: `${nomeFmt} - ${uf.toUpperCase()}`, t: 'municipio_ibge', lat: val[0], lng: val[1] });
+            if (results.length >= 12) break;
+          }
+        }
+      }
       if (results.length === 0) {
         const g = geocodificarLocal(url.searchParams.get('q'));
         if (g.valido) {
@@ -658,7 +714,48 @@ export default {
           if (Array.isArray(arr) && arr.length) baseLojas.push(...arr);
         }
 
-        // Fallback para geo/lojas-ativas.json se não houver shard z12 na região
+        // Fallback para POIs reais do tile HQ z14 da região se não houver shard z12 de lojas
+        if (baseLojas.length === 0) {
+          try {
+            const hq14 = deg2num(lat, lng, 14);
+            const hqObj = await env.ROTAS_R2.get(`hq/14/${hq14.x}/${hq14.y}.json`);
+            if (hqObj) {
+              const buf = await new Response(hqObj.body.pipeThrough(new DecompressionStream('gzip'))).json();
+              const tl = (() => {
+                const n = 2 ** 14;
+                const lng0 = (hq14.x / n) * 360 - 180;
+                const lr0 = Math.atan(Math.sinh(Math.PI * (1 - (2 * hq14.y) / n)));
+                const lng1 = ((hq14.x + 1) / n) * 360 - 180;
+                const lr1 = Math.atan(Math.sinh(Math.PI * (1 - (2 * (hq14.y + 1)) / n)));
+                return { lat0: (lr0 * 180) / Math.PI, lng0, lat1: (lr1 * 180) / Math.PI, lng1 };
+              })();
+              const rev = geocodificarReverso(lat, lng);
+              const mapCat = (k = '', s = '') => {
+                const ks = `${k} ${s}`;
+                if (/restaurant|fast_food|cafe|bar|bakery|food/.test(ks)) return ['alimentacao', 'Alimentação'];
+                if (/hospital|clinic|pharmacy|doctors|dentist/.test(ks)) return ['saude', 'Saúde / Farmácia'];
+                if (/shop|supermarket|grocery|mall|convenience|clothing/.test(ks)) return ['varejo', 'Comércio Varejista'];
+                return ['servicos', 'Serviços / Local'];
+              };
+              for (let i = 0; i < (buf.poi || []).length; i++) {
+                const p = buf.poi[i];
+                if (!p.n || !p.p) continue;
+                const [cat, sub] = mapCat(p.k, p.s);
+                baseLojas.push({
+                  id: `hq_${hq14.x}_${hq14.y}_${i}`,
+                  n: p.n,
+                  cat,
+                  sub,
+                  c: rev.municipio || 'Brasil',
+                  lat: Number((tl.lat0 + (p.p[1] / 4096) * (tl.lat1 - tl.lat0)).toFixed(6)),
+                  lng: Number((tl.lng0 + (p.p[0] / 4096) * (tl.lng1 - tl.lng0)).toFixed(6))
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
+        // Fallback final para geo/lojas-ativas.json
         if (baseLojas.length === 0) {
           if (!memLojasCache) {
             try {

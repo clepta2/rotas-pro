@@ -501,7 +501,7 @@
             <span>5.570 Cidades · Zero 3ºs</span>
           </div>
         </div>
-        <div class="sidebar-version">v1.0.0 · IBGE · DNE · ANTT</div>
+        <div class="sidebar-version">v1.0.0 · IBGE · DNE · ANTT · © OpenStreetMap</div>
       </div>
     </aside>
 
@@ -707,13 +707,13 @@
                         <i data-lucide="circle-dollar-sign" style="width:13px;height:13px;"></i> <span>Pedágios</span>
                       </button>
                       <button class="map-layer-pill" id="btn-layer-fullscreen" title="Expandir Mapa em Tela Cheia">
+                        <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
+                      </button>
                       <button class="map-layer-pill" id="btn-view-driver" title="Modo Motorista: Cockpit com rota, semáforos e velocidade (estilo Uber)">
                         <i data-lucide="car" style="width:13px;height:13px;"></i> Motorista 🚕
                       </button>
                       <button class="map-layer-pill is-active" id="btn-view-passenger" title="Modo Acompanhante: Rota, ETA e posição do veículo (estilo iFood link)">
                         <i data-lucide="eye" style="width:13px;height:13px;"></i> Acompanhante 👀
-                      </button>
-                        <i data-lucide="scan" style="width:13px;height:13px;"></i> <span>Tela Cheia</span>
                       </button>
                     </div>
                   </div>
@@ -756,18 +756,6 @@
                     </div>
                   </div>
 
-                  <!-- Legenda das Linhas e Elementos do Mapa (Para motorista e acompanhamento) -->
-                  <div id="map-legend-bar" style="position:absolute;bottom:14px;left:14px;z-index:18;display:flex;gap:8px;flex-wrap:wrap;background:rgba(15,23,42,0.92);padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);backdrop-filter:blur(8px);font-size:10px;font-weight:700;color:#f8fafc;pointer-events:none;">
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#2563eb;display:inline-block;"></span> Rota Ativa</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#64748b;border-top:1.5px dashed #38bdf8;display:inline-block;"></span> Desvio (Clarinho)</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#22c55e;display:inline-block;"></span> Concluído / Livre</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:#334155;border:1.5px solid #94a3b8;display:inline-block;"></span> Ponte / Viaduto</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
-                  </div>
-                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Lentidão / Trânsito</span>
-                  </div>
-
                   <!-- Popup Flutuante: O que há aqui? / Detalhes da Loja Ativa -->
                   <div class="map-place-popup" id="map-place-popup">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;">
@@ -792,7 +780,18 @@
                   </div>
                 </div>
 
-                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:-8px 0 14px;font-size:10.5px;line-height:1.45;">
+                <!-- Legenda das Linhas e Elementos do Mapa (abaixo do viewport para não cobrir escala/altimetria) -->
+                <div id="map-legend-bar" style="display:flex;gap:10px;flex-wrap:wrap;background:rgba(15,23,42,0.92);padding:7px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);font-size:10.5px;font-weight:700;color:#f8fafc;margin:-6px 0 10px;">
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#2563eb;display:inline-block;"></span> Rota Ativa</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#64748b;border-top:1.5px dashed #38bdf8;display:inline-block;"></span> Desvio (Clarinho)</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#22c55e;display:inline-block;"></span> Concluído / Livre</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:#334155;border:1.5px solid #94a3b8;display:inline-block;"></span> Ponte / Viaduto</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Radar</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:2px;background:#090e17;border:1px solid #22c55e;display:inline-block;"></span> Semáforo</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:4px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Lentidão / Trânsito</span>
+                </div>
+
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px;font-size:10.5px;line-height:1.45;">
                   <div id="map-coverage-status" role="status" aria-live="polite" style="color:#94a3b8;">Verificando cobertura de ruas e relevo…</div>
                   <div id="map-route-quality" hidden role="status" aria-live="polite" style="font-weight:700;"></div>
                 </div>
@@ -1030,8 +1029,8 @@
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.0.0';
-    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.0.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.2.0';
+    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.2.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
@@ -1462,7 +1461,7 @@
 
     // Controles de Zoom & GPS do Mapa
     document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
-      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.min(21.0, mapEngine.zoom + 1.0), 250);
+      mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.min(22.0, mapEngine.zoom + 1.0), 250);
     });
     document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
       mapEngine.flyTo(mapEngine.lat, mapEngine.lng, Math.max(4.0, mapEngine.zoom - 1.0), 250);
