@@ -1022,11 +1022,51 @@ export default {
       return jsonResp(res, res.valido ? 200 : 400);
     }
 
-    // ── 5. ROTA: GEOCODIFICAÇÃO DIRETA & REVERSA (5.570 MUNICÍPIOS IBGE + DNE) ──
+    // ── 5. ROTA: GEOCODIFICAÇÃO DIRETA & REVERSA (5.570 MUNICÍPIOS IBGE + SHARDS CEP REAIS R2) ──
     if (pathname === '/api/rotas/geocoding/reverso') {
       const lat = url.searchParams.get('lat') || '-23.5614';
       const lng = url.searchParams.get('lng') || '-46.6558';
       const res = geocodificarReverso(lat, lng);
+      if (res.valido && env && env.ROTAS_R2) {
+        try {
+          const nLat = parseFloat(lat);
+          const nLng = parseFloat(lng);
+          const t = deg2num(nLat, nLng, 12);
+          let best = null;
+          let bestD = 3.0; // máx 3 km
+          const cepObj = await env.ROTAS_R2.get(`cep/12/${t.x}/${t.y}.json`);
+          if (cepObj) {
+            const pts = await cepObj.json();
+            for (const p of pts) {
+              const d = calcularDistanciaHaversineKm(nLat, nLng, p[0], p[1]);
+              if (d < bestD) { bestD = d; best = { cep: p[2], street: p[3], suburb: p[4], d }; }
+            }
+          }
+          if (!best) {
+            const stObj = await env.ROTAS_R2.get(`stores/12/${t.x}/${t.y}.json`);
+            if (stObj) {
+              const sts = await stObj.json();
+              for (const s of sts) {
+                if (!s.cep) continue;
+                const d = calcularDistanciaHaversineKm(nLat, nLng, s.lat, s.lng);
+                if (d < bestD) { bestD = d; best = { cep: s.cep, street: s.end || '', suburb: '', d }; }
+              }
+            }
+          }
+          if (best && best.cep) {
+            res.cepEstimado = best.cep;
+            res.precisao = 'cep_real_r2';
+            res.distanciaCepKm = Number(best.d.toFixed(3));
+            if (best.street) res.logradouroSugerido = best.street;
+            if (best.suburb) res.bairroSugerido = best.suburb;
+            res.enderecoFormatado = [
+              best.street || res.logradouroSugerido,
+              best.suburb || res.bairroSugerido,
+              `${res.municipio}/${res.uf} (${best.cep})`
+            ].filter(Boolean).join(' — ');
+          }
+        } catch (_) {}
+      }
       return jsonResp(res, res.valido ? 200 : 400);
     }
 

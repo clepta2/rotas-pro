@@ -488,6 +488,10 @@ export function geocodificarLocal(entrada) {
     const partes = chaveDireta.split('_');
     const uf = partes[1].toUpperCase();
     const nomeCidade = raw.split(/[\-\/,]/)[0].trim();
+    const fxInt = FAIXAS_CEP_INTERIOR.find((f) => f.chave === chaveDireta);
+    const cepCidade = fxInt
+      ? `${String(fxInt.min).padStart(8, '0').slice(0, 5)}-000`
+      : (CAPITAIS_POR_UF[uf] ? `${String(CAPITAIS_POR_UF[uf].min).padStart(8, '0').slice(0, 5)}-000` : '01000-000');
     return {
       valido: true,
       tipoResolvido: 'municipio_ibge',
@@ -498,7 +502,7 @@ export function geocodificarLocal(entrada) {
       bairro: 'Centro',
       cidade: nomeCidade,
       uf,
-      cep: CAPITAIS_POR_UF[uf] ? `${String(CAPITAIS_POR_UF[uf].min).padStart(8, '0').slice(0, 5)}-000` : '01000-000',
+      cep: cepCidade,
       ddd,
       codigoIbge: ibge
     };
@@ -613,7 +617,18 @@ export function geocodificarReverso(lat, lng) {
   const uf = (partes[1] || 'SP').toUpperCase();
   const municipioNome = partes[0].replace(/\b\w/g, (c) => c.toUpperCase());
   const capInfo = CAPITAIS_POR_UF[uf] || CAPITAIS_POR_UF.SP;
-  const cepBase = String(capInfo.min).padStart(8, '0');
+  const fxInt = FAIXAS_CEP_INTERIOR.find((f) => f.chave === melhorChave);
+  let cepNum = capInfo.min;
+  if (fxInt) {
+    cepNum = fxInt.min;
+  } else if (normalizarTextoSemAcento(capInfo.cidade) !== partes[0]) {
+    // Município do interior fora da tabela fixa: distribui na faixa estadual (evita repetir 80000-000/01000-000 da capital)
+    const span = Math.max(100000, capInfo.max - capInfo.min);
+    const ibgeNum = parseInt(melhorVal[3], 10) || 1;
+    const offset = Math.floor(((ibgeNum * 2654435761) % 1000) / 1000 * (span * 0.75) + span * 0.15);
+    cepNum = Math.min(capInfo.max, Math.floor((capInfo.min + offset) / 1000) * 1000);
+  }
+  const cepBase = String(cepNum).padStart(8, '0');
   const cepEstimado = `${cepBase.slice(0, 5)}-${cepBase.slice(5)}`;
 
   return {

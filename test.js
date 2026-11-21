@@ -348,6 +348,10 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
   assert(feira.valido && feira.uf === 'BA' && feira.lat > -13 && feira.lat < -11, `Feira de Santana-BA deve resolver para BA e não para Santana/SP (obtido: ${feira.cidade}/${feira.uf})`);
   const paulistaPe = geocodificarLocal('Paulista-PE');
   assert(paulistaPe.valido && paulistaPe.uf === 'PE' && paulistaPe.lat > -9 && paulistaPe.lat < -7, `Paulista-PE deve resolver para PE e não para Av. Paulista/SP (obtido: ${paulistaPe.cidade}/${paulistaPe.uf})`);
+  const revLondrina = geocodificarReverso(-23.3045, -51.1696);
+  assert(revLondrina.valido && revLondrina.cepEstimado.startsWith('860'), `Geocodificação reversa em Londrina/PR não deve retornar 80000-000 da capital (obtido: ${revLondrina.cepEstimado})`);
+  const revMaringa = geocodificarReverso(-23.4205, -51.9333);
+  assert(revMaringa.valido && revMaringa.cepEstimado.startsWith('870'), `Geocodificação reversa em Maringá/PR deve usar faixa 870xx (obtido: ${revMaringa.cepEstimado})`);
 
   const cobBrasil = resumirCoberturaViewport({
     lat: -22.3145,
