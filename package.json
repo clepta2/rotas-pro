@@ -10,5 +10,8 @@
     "security:check": "node scripts/security-guard.js"
   },
   "author": "clepta2",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.165.0"
+  }
 }
