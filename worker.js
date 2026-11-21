@@ -329,8 +329,30 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
+    const isMapTileOrAsset =
+      pathname === '/' ||
+      pathname === '/app' ||
+      pathname === '/embed' ||
+      pathname === '/health' ||
+      pathname === '/status' ||
+      pathname === '/styles.css' ||
+      pathname === '/ponte-suite.css' ||
+      pathname === '/brand/ozpro-mark.svg' ||
+      pathname === '/rotas-pro.js' ||
+      pathname === '/ponte-maps-engine.js' ||
+      pathname === '/municipios_geo.js' ||
+      pathname.startsWith('/api/mapas/hq/') ||
+      pathname.startsWith('/api/mapas/terreno/') ||
+      pathname.startsWith('/api/mapas/sinalizacao/') ||
+      pathname.startsWith('/api/mapas/tiles/') ||
+      pathname.startsWith('/api/mapas/camadas/') ||
+      pathname === '/api/mapas/pedagios';
+
     const auth = resolverPlano(request);
-    const rl = checkRateLimit(auth.keyId, auth.config);
+    const effectiveConfig = isMapTileOrAsset
+      ? { ...auth.config, rpm: Math.max(auth.config.rpm, 1800) }
+      : auth.config;
+    const rl = checkRateLimit(isMapTileOrAsset ? `tile_${auth.keyId}` : auth.keyId, effectiveConfig);
     if (!rl.ok) {
       return new Response(JSON.stringify(rl, null, 2), {
         status: 429,

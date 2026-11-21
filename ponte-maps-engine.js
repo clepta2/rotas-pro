@@ -404,12 +404,16 @@ export class PonteMapEngine {
           await cache.put(url, res.clone());
           return await parseRes(res);
         }
-        return null;
-      } catch (_) {}
+        if (res.status === 204 || res.status === 404) return null;
+        throw new Error(`HTTP ${res.status}`);
+      } catch (err) {
+        if (err && /^HTTP (429|5\d\d)/.test(err.message)) throw err;
+      }
     }
     const res = await fetch(url);
-    if (res.status !== 200) return null;
-    return await parseRes(res);
+    if (res.status === 200) return await parseRes(res);
+    if (res.status === 204 || res.status === 404) return null;
+    throw new Error(`HTTP ${res.status}`);
   }
 
   async _loadTerrainIndex() {
@@ -1111,8 +1115,8 @@ export class PonteMapEngine {
       this._renderTolls(ctx, pal);
     }
 
-    // 4. Rótulos das Principais Cidades Brasileiras em Zoom Nacional/Regional (< 11.5)
-    if (this.brasilGeo && this.brasilGeo.cidades && this.zoom < 11.5) {
+    // 4. Rótulos das Principais Cidades Brasileiras em Zoom Nacional/Regional (< 11.5) apenas quando HQ não está ativo
+    if (!hqOn && this.brasilGeo && this.brasilGeo.cidades && this.zoom < 11.5) {
       this._renderCidadesLabels(ctx, pal);
     }
 
@@ -1774,7 +1778,7 @@ export class PonteMapEngine {
     if (this.hqIndex || this.hqIndexLoading || this.hqIndexError) return;
     this.hqIndexLoading = true;
     try {
-      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json?v=4.4.0`, { cache: 'no-cache' });
+      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json?v=4.6.0`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       const idx = {};
@@ -3864,8 +3868,8 @@ export class PonteMapEngine {
 
     ctx.restore();
 
-    // 6. Placa de limite da via atual acompanhando o veículo
-    if (this.vehicleProgress > 0 && this.vehicleProgress < 100) {
+    // 6. Placa de limite da via atual acompanhando o veículo (apenas em zoom urbano)
+    if (this.zoom >= 11.5 && this.vehicleProgress > 0 && this.vehicleProgress < 100) {
       const lim = this._currentSpeedLimit();
       if (lim) this._drawSpeedSign(ctx, vx + 24, vy - 24, lim.kmh, 12);
     }

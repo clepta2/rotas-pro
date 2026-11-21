@@ -387,25 +387,31 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
  */
 export async function rotearRodoviarioNacionalR2(origem, destino, hqTileFetcher) {
   const distDiretaKm = calcularDistanciaHaversineKm(origem.lat, origem.lng, destino.lat, destino.lng);
-  if (distDiretaKm < 12 || distDiretaKm > 1400) {
+  if (distDiretaKm < 12 || distDiretaKm > 4500) {
     return { found: false, reason: 'OUT_OF_HIGHWAY_RANGE' };
   }
 
-  const tA = deg2num(origem.lat, origem.lng, 8);
-  const tB = deg2num(destino.lat, destino.lng, 8);
+  let rz = 8;
+  let tA = deg2num(origem.lat, origem.lng, rz);
+  let tB = deg2num(destino.lat, destino.lng, rz);
+  if ((Math.abs(tA.x - tB.x) + 1) * (Math.abs(tA.y - tB.y) + 1) > 25) {
+    rz = 6;
+    tA = deg2num(origem.lat, origem.lng, rz);
+    tB = deg2num(destino.lat, destino.lng, rz);
+  }
   const minX = Math.min(tA.x, tB.x);
   const maxX = Math.max(tA.x, tB.x);
   const minY = Math.min(tA.y, tB.y);
   const maxY = Math.max(tA.y, tB.y);
 
-  if ((maxX - minX + 1) * (maxY - minY + 1) > 25) {
+  if ((maxX - minX + 1) * (maxY - minY + 1) > 36) {
     return { found: false, reason: 'TOO_MANY_TILES' };
   }
 
   const tilePromises = [];
   for (let tx = minX; tx <= maxX; tx++) {
     for (let ty = minY; ty <= maxY; ty++) {
-      tilePromises.push(hqTileFetcher(8, tx, ty).then((tile) => ({ tx, ty, tile })));
+      tilePromises.push(hqTileFetcher(rz, tx, ty).then((tile) => ({ tx, ty, tile })));
     }
   }
   const loaded = await Promise.all(tilePromises);
@@ -414,8 +420,9 @@ export async function rotearRodoviarioNacionalR2(origem, destino, hqTileFetcher)
 
   const nodes = new Map();
   const roadLabels = [];
+  const snapScale = rz === 6 ? 35 : 100;
   const getNode = (lat, lng) => {
-    const key = `${Math.round(lat * 100)}_${Math.round(lng * 100)}`;
+    const key = `${Math.round(lat * snapScale)}_${Math.round(lng * snapScale)}`;
     let n = nodes.get(key);
     if (!n) { n = { id: key, lat, lng, edges: [] }; nodes.set(key, n); }
     return n;
@@ -423,8 +430,8 @@ export async function rotearRodoviarioNacionalR2(origem, destino, hqTileFetcher)
 
   const HW_WEIGHT = { motorway: 0.75, trunk: 0.85, primary: 1.0 };
   for (const { tx, ty, tile } of validTiles) {
-    const tl = tile2latlng(tx, ty, 8);
-    const br = tile2latlng(tx + 1, ty + 1, 8);
+    const tl = tile2latlng(tx, ty, rz);
+    const br = tile2latlng(tx + 1, ty + 1, rz);
     const ext = tile.e || 4096;
     for (const nm of tile.name || []) {
       if (nm.n && nm.c && nm.c.length >= 2) {
@@ -444,7 +451,7 @@ export async function rotearRodoviarioNacionalR2(origem, destino, hqTileFetcher)
         const lat = tl.lat + (rd.c[i + 1] / ext) * (br.lat - tl.lat);
         const lng = tl.lng + (rd.c[i] / ext) * (br.lng - tl.lng);
         if (prev) {
-          const steps = Math.min(8, Math.floor(Math.hypot(lat - prev.lat, lng - prev.lng) * 100));
+          const steps = Math.min(8, Math.floor(Math.hypot(lat - prev.lat, lng - prev.lng) * snapScale));
           for (let s = 1; s <= steps; s++) {
             const f = s / (steps + 1);
             const mid = getNode(prev.lat + (lat - prev.lat) * f, prev.lng + (lng - prev.lng) * f);
