@@ -15,7 +15,7 @@
  * @license MIT
  */
 
-import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js?v=4.6.0';
+import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js?v=4.7.0';
 
 // ─── 1. POLOS URBANOS, BAIRROS, AVENIDAS E AEROPORTOS (ALTA PRECISÃO) ───
 export const POLOS_URBANOS_BRASIL = {

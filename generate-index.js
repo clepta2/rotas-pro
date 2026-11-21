@@ -987,8 +987,8 @@ ${ponteIconsCode}
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.6.0';
-    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.6.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.7.0';
+    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.7.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';

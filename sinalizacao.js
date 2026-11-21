@@ -265,7 +265,7 @@ export async function dadosLocais(env, lat, lng) {
   };
 }
 
-// ── PEDÁGIOS NACIONAIS (tabela ANTT com tarifas + praças OSM) ──
+// ── PEDÁGIOS NACIONAIS (tabela ANTT com tarifas + catálogo oficial ANTT + praças OSM) ──
 export async function listarPedagiosMapa(env) {
   if (memPedagios) return memPedagios;
   const lista = PRACAS_PEDAGIO_BRASIL.map((p) => ({
@@ -274,6 +274,28 @@ export async function listarPedagiosMapa(env) {
     fonte: 'tabela_antt'
   }));
   if (env && env.ROTAS_R2) {
+    try {
+      const anttObj = await env.ROTAS_R2.get('geo/pedagios-antt.json');
+      if (anttObj) {
+        const antt = await anttObj.json();
+        for (const p of antt) {
+          const dup = lista.some((x) => Math.abs(x.lat - p.lat) < 0.03 && Math.abs(x.lng - p.lng) < 0.03);
+          if (dup) continue;
+          lista.push({
+            id: `antt_${p.lat.toFixed(4)}_${p.lng.toFixed(4)}`,
+            nome: p.nome,
+            rodovia: p.rodovia,
+            uf: p.uf,
+            municipio: p.municipio,
+            operador: p.operador,
+            lat: p.lat,
+            lng: p.lng,
+            tarifaCarro: null, tarifaMoto: null, tarifaEixoCaminhao: null,
+            fonte: 'dados_abertos_antt'
+          });
+        }
+      }
+    } catch (_) {}
     try {
       const obj = await env.ROTAS_R2.get('geo/pedagios-osm.json');
       if (obj) {

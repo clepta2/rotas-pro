@@ -1778,7 +1778,7 @@ export class PonteMapEngine {
     if (this.hqIndex || this.hqIndexLoading || this.hqIndexError) return;
     this.hqIndexLoading = true;
     try {
-      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json?v=4.6.0`, { cache: 'no-cache' });
+      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json?v=4.7.0`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       const idx = {};
