@@ -13,7 +13,8 @@
 
 import { STYLES_CSS, HTML_INDEX, CLIENT_JS, OZPRO_MARK_SVG, MAPS_ENGINE_JS } from './site-assets.js';
 import { MUNICIPIOS_GEO_JS } from './municipios-geo-assets.js';
-import { rotearPorMalhaRealR2, deg2num } from './astar-routing.js';
+import { rotearPorMalhaRealR2, rotearRodoviarioNacionalR2, deg2num } from './astar-routing.js';
+import { hqToRoutingTile } from './mvt-decoder.js';
 import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js';
 import {
   geocodificarLocal,
@@ -50,15 +51,29 @@ function gerarTileSinteticoLocal(z, x, y) {
 async function lerTileR2(env, z, x, y) {
   if (!env || !env.ROTAS_R2) return null;
   try {
-    // Grafo leve derivado dos tiles HQ (cobertura ampla) com fallback para os tiles legados
+    // Grafo leve derivado dos tiles HQ (cobertura ampla) com fallback para tiles legados e HQ gzip
     const rt = await env.ROTAS_R2.get(`rt/${z}/${x}/${y}.json`);
     if (rt) return await rt.json();
     const obj = await env.ROTAS_R2.get(`tiles/${z}/${x}/${y}.json`);
     if (obj) return await obj.json();
+    const hqObj = await env.ROTAS_R2.get(`hq/${z}/${x}/${y}.json`);
+    if (hqObj) {
+      const hq = await new Response(hqObj.body.pipeThrough(new DecompressionStream('gzip'))).json();
+      return hqToRoutingTile(hq);
+    }
   } catch (error) {
     console.error(`[Rotas R2] Falha ao ler tile ${z}/${x}/${y}:`, error);
     throw error;
   }
+  return null;
+}
+
+async function lerHqTileR2(env, z, x, y) {
+  if (!env || !env.ROTAS_R2) return null;
+  try {
+    const hqObj = await env.ROTAS_R2.get(`hq/${z}/${x}/${y}.json`);
+    if (hqObj) return await new Response(hqObj.body.pipeThrough(new DecompressionStream('gzip'))).json();
+  } catch (_) {}
   return null;
 }
 
@@ -90,11 +105,19 @@ export async function enriquecerRotaComAStar(rota, env) {
   if (!env || !env.ROTAS_R2) return marcarAproximada('MALHA_NAO_CONFIGURADA');
 
   try {
-    const astar = await rotearPorMalhaRealR2(rota.origem, rota.destino, (z, x, y) => lerTileR2(env, z, x, y));
+    let astar = await rotearPorMalhaRealR2(rota.origem, rota.destino, (z, x, y) => lerTileR2(env, z, x, y));
+    let tipoRoteamento = 'malha_viaria_real_astar_R2';
+    if (!astar || !astar.found || astar.waypoints.length < 3) {
+      const hw = await rotearRodoviarioNacionalR2(rota.origem, rota.destino, (z, x, y) => lerHqTileR2(env, z, x, y));
+      if (hw && hw.found && hw.waypoints.length >= 3) {
+        astar = hw;
+        tipoRoteamento = 'malha_rodoviaria_nacional_astar_R2';
+      }
+    }
     if (astar && astar.found && astar.waypoints.length >= 3) {
       rota.geometriaRota = {
         formato: 'GeoJSON_LineString_Compat',
-        tipoRoteamento: 'malha_viaria_real_astar_R2',
+        tipoRoteamento,
         nodesGrafoAnalisados: astar.nodesGraph,
         totalWaypoints: astar.waypoints.length,
         waypoints: astar.waypoints
@@ -419,7 +442,7 @@ export default {
         } catch (_) {}
       }
       return new Response(JSON.stringify(idx), {
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=1800' }
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=60' }
       });
     }
 
@@ -633,7 +656,19 @@ export default {
         return jsonResp({ valido: true, resultados: [] });
       }
       let results = [];
-      if (env && env.ROTAS_R2) {
+      const exactCities = [];
+      const prefixCities = [];
+      for (const [k, val] of Object.entries(GEO_MUNICIPIOS_NOME)) {
+        const [cid, uf] = k.split('_');
+        if (cid === q) exactCities.push([cid, uf, val]);
+        else if (cid.startsWith(q)) prefixCities.push([cid, uf, val]);
+      }
+      for (const [cid, uf, val] of [...exactCities, ...prefixCities]) {
+        const nomeFmt = cid.replace(/\b\w/g, (c) => c.toUpperCase());
+        results.push({ n: `${nomeFmt} / ${uf.toUpperCase()}`, c: `${nomeFmt} - ${uf.toUpperCase()}`, t: 'municipio_ibge', lat: val[0], lng: val[1] });
+        if (results.length >= 5) break;
+      }
+      if (env && env.ROTAS_R2 && results.length < 12) {
         try {
           const idxObj = await env.ROTAS_R2.get('geo/places-index.json');
           if (idxObj) {
@@ -649,21 +684,15 @@ export default {
         } catch (_) {}
       }
       if (results.length < 12) {
-        const exactMatches = [];
-        const prefixMatches = [];
-        const partialMatches = [];
         for (const [k, val] of Object.entries(GEO_MUNICIPIOS_NOME)) {
           const [cid, uf] = k.split('_');
-          if (cid === q) exactMatches.push([cid, uf, val]);
-          else if (cid.startsWith(q)) prefixMatches.push([cid, uf, val]);
-          else if (cid.includes(q)) partialMatches.push([cid, uf, val]);
-        }
-        for (const [cid, uf, val] of [...exactMatches, ...prefixMatches, ...partialMatches]) {
-          const nomeFmt = cid.replace(/\b\w/g, (c) => c.toUpperCase());
-          const dup = results.some((r) => r.c && r.c.toLowerCase().startsWith(cid) && Math.abs(r.lat - val[0]) < 0.15);
-          if (!dup) {
-            results.unshift({ n: `${nomeFmt} / ${uf.toUpperCase()}`, c: `${nomeFmt} - ${uf.toUpperCase()}`, t: 'municipio_ibge', lat: val[0], lng: val[1] });
-            if (results.length >= 12) break;
+          if (cid.includes(q)) {
+            const nomeFmt = cid.replace(/\b\w/g, (c) => c.toUpperCase());
+            const dup = results.some((r) => r.c && r.c.toLowerCase().startsWith(cid) && Math.abs(r.lat - val[0]) < 0.15);
+            if (!dup) {
+              results.push({ n: `${nomeFmt} / ${uf.toUpperCase()}`, c: `${nomeFmt} - ${uf.toUpperCase()}`, t: 'municipio_ibge', lat: val[0], lng: val[1] });
+              if (results.length >= 12) break;
+            }
           }
         }
       }

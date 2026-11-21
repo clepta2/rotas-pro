@@ -15,7 +15,7 @@
  * @license MIT
  */
 
-import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js?v=4.1.0';
+import { GEO_MUNICIPIOS_IBGE, GEO_MUNICIPIOS_NOME } from './municipios_geo.js?v=4.4.0';
 
 // ─── 1. POLOS URBANOS, BAIRROS, AVENIDAS E AEROPORTOS (ALTA PRECISÃO) ───
 export const POLOS_URBANOS_BRASIL = {
@@ -462,7 +462,7 @@ export function geocodificarLocal(entrada) {
     };
   }
 
-  // 3. Verificar apelidos de pontos famosos (Av. Paulista, Congonhas, Faria Lima, etc.)
+  // 3. Verificar apelidos exatos de pontos famosos (Av. Paulista, Congonhas, Faria Lima, etc.)
   const norm = normalizarTextoSemAcento(raw);
   if (ALIASES_LOCAIS[norm]) {
     const p = ALIASES_LOCAIS[norm];
@@ -481,25 +481,7 @@ export function geocodificarLocal(entrada) {
     };
   }
 
-  for (const [aliasKey, p] of Object.entries(ALIASES_LOCAIS)) {
-    if (norm.includes(aliasKey)) {
-      return {
-        valido: true,
-        tipoResolvido: 'ponto_notavel_urbano',
-        lat: p.lat,
-        lng: p.lng,
-        rotulo: `${p.logradouro} — ${p.bairro}, ${p.cidade}/${p.uf}`,
-        logradouro: p.logradouro,
-        bairro: p.bairro,
-        cidade: p.cidade,
-        uf: p.uf,
-        cep: p.cep,
-        codigoIbge: '3550308'
-      };
-    }
-  }
-
-  // 4. Resolver nos 5.570 municípios do IBGE (ex: "sao paulo - sp", "campinas sp", "curitiba")
+  // 4. Resolver nos 5.570 municípios do IBGE ANTES de substring de apelidos (evita "Feira de Santana-BA" -> "Santana SP")
   const chaveDireta = norm.replace(/[\s\-\/]+([a-z]{2})$/, '_$1');
   if (GEO_MUNICIPIOS_NOME[chaveDireta]) {
     const [lat, lng, ddd, ibge] = GEO_MUNICIPIOS_NOME[chaveDireta];
@@ -520,6 +502,24 @@ export function geocodificarLocal(entrada) {
       ddd,
       codigoIbge: ibge
     };
+  }
+
+  for (const [aliasKey, p] of Object.entries(ALIASES_LOCAIS)) {
+    if (norm.includes(aliasKey)) {
+      return {
+        valido: true,
+        tipoResolvido: 'ponto_notavel_urbano',
+        lat: p.lat,
+        lng: p.lng,
+        rotulo: `${p.logradouro} — ${p.bairro}, ${p.cidade}/${p.uf}`,
+        logradouro: p.logradouro,
+        bairro: p.bairro,
+        cidade: p.cidade,
+        uf: p.uf,
+        cep: p.cep,
+        codigoIbge: '3550308'
+      };
+    }
   }
 
   // Busca por prefixo do nome da cidade

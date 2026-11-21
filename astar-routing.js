@@ -380,3 +380,180 @@ export async function rotearPorMalhaRealR2(origem, destino, tileFetcher) {
     iterations
   };
 }
+
+/**
+ * Roteamento rodoviário nacional A* sobre os tiles HQ z8 (rodovias federais/estaduais de todo o Brasil).
+ * Cobre trajetos intermunicipais e interestaduais de 15 km a ~1.200 km sem depender de corredores fixos.
+ */
+export async function rotearRodoviarioNacionalR2(origem, destino, hqTileFetcher) {
+  const distDiretaKm = calcularDistanciaHaversineKm(origem.lat, origem.lng, destino.lat, destino.lng);
+  if (distDiretaKm < 12 || distDiretaKm > 1400) {
+    return { found: false, reason: 'OUT_OF_HIGHWAY_RANGE' };
+  }
+
+  const tA = deg2num(origem.lat, origem.lng, 8);
+  const tB = deg2num(destino.lat, destino.lng, 8);
+  const minX = Math.min(tA.x, tB.x);
+  const maxX = Math.max(tA.x, tB.x);
+  const minY = Math.min(tA.y, tB.y);
+  const maxY = Math.max(tA.y, tB.y);
+
+  if ((maxX - minX + 1) * (maxY - minY + 1) > 25) {
+    return { found: false, reason: 'TOO_MANY_TILES' };
+  }
+
+  const tilePromises = [];
+  for (let tx = minX; tx <= maxX; tx++) {
+    for (let ty = minY; ty <= maxY; ty++) {
+      tilePromises.push(hqTileFetcher(8, tx, ty).then((tile) => ({ tx, ty, tile })));
+    }
+  }
+  const loaded = await Promise.all(tilePromises);
+  const validTiles = loaded.filter((t) => t.tile && Array.isArray(t.tile.road) && t.tile.road.length > 0);
+  if (!validTiles.length) return { found: false, reason: 'NO_TILES_IN_R2' };
+
+  const nodes = new Map();
+  const roadLabels = [];
+  const getNode = (lat, lng) => {
+    const key = `${Math.round(lat * 100)}_${Math.round(lng * 100)}`;
+    let n = nodes.get(key);
+    if (!n) { n = { id: key, lat, lng, edges: [] }; nodes.set(key, n); }
+    return n;
+  };
+
+  const HW_WEIGHT = { motorway: 0.75, trunk: 0.85, primary: 1.0 };
+  for (const { tx, ty, tile } of validTiles) {
+    const tl = tile2latlng(tx, ty, 8);
+    const br = tile2latlng(tx + 1, ty + 1, 8);
+    const ext = tile.e || 4096;
+    for (const nm of tile.name || []) {
+      if (nm.n && nm.c && nm.c.length >= 2) {
+        const mid = Math.floor(nm.c.length / 4) * 2;
+        roadLabels.push({
+          lat: tl.lat + (nm.c[mid + 1] / ext) * (br.lat - tl.lat),
+          lng: tl.lng + (nm.c[mid] / ext) * (br.lng - tl.lng),
+          name: nm.n
+        });
+      }
+    }
+    for (const rd of tile.road) {
+      const w = HW_WEIGHT[rd.k];
+      if (!w || !Array.isArray(rd.c) || rd.c.length < 4) continue;
+      let prev = null;
+      for (let i = 0; i + 1 < rd.c.length; i += 2) {
+        const lat = tl.lat + (rd.c[i + 1] / ext) * (br.lat - tl.lat);
+        const lng = tl.lng + (rd.c[i] / ext) * (br.lng - tl.lng);
+        if (prev) {
+          const steps = Math.min(8, Math.floor(Math.hypot(lat - prev.lat, lng - prev.lng) * 100));
+          for (let s = 1; s <= steps; s++) {
+            const f = s / (steps + 1);
+            const mid = getNode(prev.lat + (lat - prev.lat) * f, prev.lng + (lng - prev.lng) * f);
+            if (prev.id !== mid.id) {
+              const d = Math.hypot(mid.lat - prev.lat, (mid.lng - prev.lng) * Math.cos((mid.lat * Math.PI) / 180)) * 111.32;
+              prev.edges.push({ to: mid.id, cost: d * w, dist: d });
+              mid.edges.push({ to: prev.id, cost: d * w, dist: d });
+            }
+            prev = mid;
+          }
+        }
+        const cur = getNode(lat, lng);
+        if (prev && prev.id !== cur.id) {
+          const d = Math.hypot(cur.lat - prev.lat, (cur.lng - prev.lng) * Math.cos((cur.lat * Math.PI) / 180)) * 111.32;
+          prev.edges.push({ to: cur.id, cost: d * w, dist: d });
+          cur.edges.push({ to: prev.id, cost: d * w, dist: d });
+        }
+        prev = cur;
+      }
+    }
+  }
+
+  if (nodes.size < 10) return { found: false, reason: 'SPARSE_GRAPH' };
+
+  let startNode = null; let endNode = null;
+  let minS = Infinity; let minE = Infinity;
+  for (const n of nodes.values()) {
+    const ds = (n.lat - origem.lat) ** 2 + (n.lng - origem.lng) ** 2;
+    if (ds < minS) { minS = ds; startNode = n; }
+    const de = (n.lat - destino.lat) ** 2 + (n.lng - destino.lng) ** 2;
+    if (de < minE) { minE = de; endNode = n; }
+  }
+  if (!startNode || !endNode || minS > 0.25 || minE > 0.25) return { found: false, reason: 'NO_SNAP_NODES' };
+
+  const open = new MinHeap();
+  const gScore = new Map([[startNode.id, 0]]);
+  const dScore = new Map([[startNode.id, 0]]);
+  const cameFrom = new Map();
+  const closed = new Set();
+  const h = (n) => Math.hypot(endNode.lat - n.lat, endNode.lng - n.lng) * 80;
+  open.push({ id: startNode.id, f: h(startNode) });
+
+  let reached = false;
+  let iterations = 0;
+  while (open.size > 0 && iterations < 25000) {
+    iterations++;
+    const cur = open.pop();
+    if (cur.id === endNode.id) { reached = true; break; }
+    if (closed.has(cur.id)) continue;
+    closed.add(cur.id);
+    const curNode = nodes.get(cur.id);
+    const curG = gScore.get(cur.id);
+    const curD = dScore.get(cur.id);
+    for (const edge of curNode.edges) {
+      if (closed.has(edge.to)) continue;
+      const ng = curG + edge.cost;
+      if (ng < (gScore.get(edge.to) ?? Infinity)) {
+        cameFrom.set(edge.to, cur.id);
+        gScore.set(edge.to, ng);
+        dScore.set(edge.to, curD + edge.dist);
+        open.push({ id: edge.to, f: ng + h(nodes.get(edge.to)) });
+      }
+    }
+  }
+  if (!reached) return { found: false, reason: 'PATH_NOT_CONNECTED' };
+
+  const pathNodes = [];
+  let currId = endNode.id;
+  while (currId) {
+    const n = nodes.get(currId);
+    pathNodes.push({ lat: Number(n.lat.toFixed(6)), lng: Number(n.lng.toFixed(6)) });
+    currId = cameFrom.get(currId);
+  }
+  pathNodes.reverse();
+
+  const raw = [
+    { lat: Number(origem.lat.toFixed(6)), lng: Number(origem.lng.toFixed(6)) },
+    ...pathNodes,
+    { lat: Number(destino.lat.toFixed(6)), lng: Number(destino.lng.toFixed(6)) }
+  ];
+  let distRealKm = 0;
+  for (let i = 0; i < raw.length - 1; i++) {
+    distRealKm += calcularDistanciaHaversineKm(raw[i].lat, raw[i].lng, raw[i + 1].lat, raw[i + 1].lng);
+  }
+
+  const viasAtravessadas = [];
+  const viasSet = new Set();
+  const step = Math.max(1, Math.floor(raw.length / 8));
+  for (let i = 1; i < raw.length - 1; i += step) {
+    const wp = raw[i];
+    let best = null; let bd = 0.02;
+    for (const lbl of roadLabels) {
+      const d = (lbl.lat - wp.lat) ** 2 + (lbl.lng - wp.lng) ** 2;
+      if (d < bd) { bd = d; best = lbl.name; }
+    }
+    if (best && !viasSet.has(best)) { viasSet.add(best); viasAtravessadas.push(best); }
+  }
+
+  const waypoints = raw.map((p, idx) => ({
+    ...p,
+    progresso: Math.round((idx / (raw.length - 1)) * 100)
+  }));
+
+  return {
+    found: true,
+    waypoints,
+    distanciaRealKm: Number(Math.max(1, distRealKm).toFixed(2)),
+    viasAtravessadas,
+    nodesGraph: nodes.size,
+    iterations
+  };
+}

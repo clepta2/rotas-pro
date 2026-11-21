@@ -987,8 +987,8 @@ ${ponteIconsCode}
   </nav>
 
   <script type="module">
-    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.2.0';
-    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.2.0';
+    import { PonteMapEngine } from './ponte-maps-engine.js?v=4.4.0';
+    import { calcularRotaCompleta, calcularTrackingViagemAoVivo, detectarPontesViadutosNaRota, diagnosticarPlacaNaRota } from './rotas-pro.js?v=4.4.0';
 
     const API_BASE = window.location.hostname.includes('workers.dev') ? '' : 'https://rotas-pro-api.clepta2.workers.dev';
     let currentModal = 'carro';
@@ -1503,8 +1503,8 @@ ${ponteIconsCode}
         data = await resJson.json();
       } catch (_) {}
 
-      // Fallback local instantâneo se a API remota falhar ou não possuir os recursos mais recentes de pontes e rotas alternativas
-      if (!data || !data.valido || !data.rotaBase?.rotasAlternativas) {
+      // Fallback local instantâneo apenas se a API remota falhar ou retornar inválido
+      if (!data || !data.valido) {
         data = calcularTrackingViagemAoVivo({
           origem: orig,
           destino: dest,

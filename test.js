@@ -344,6 +344,10 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
   assert(cepLondrina.valido && cepLondrina.cidade === 'Londrina' && cepLondrina.uf === 'PR', `CEP 86010-000 deve resolver para Londrina/PR (obtido: ${cepLondrina.cidade}/${cepLondrina.uf})`);
   const cepBoaVista = geocodificarLocal('69301-000');
   assert(cepBoaVista.valido && cepBoaVista.cidade === 'Boa Vista' && cepBoaVista.uf === 'RR', `CEP 69301-000 deve resolver para Boa Vista/RR (obtido: ${cepBoaVista.cidade}/${cepBoaVista.uf})`);
+  const feira = geocodificarLocal('Feira de Santana-BA');
+  assert(feira.valido && feira.uf === 'BA' && feira.lat > -13 && feira.lat < -11, `Feira de Santana-BA deve resolver para BA e não para Santana/SP (obtido: ${feira.cidade}/${feira.uf})`);
+  const paulistaPe = geocodificarLocal('Paulista-PE');
+  assert(paulistaPe.valido && paulistaPe.uf === 'PE' && paulistaPe.lat > -9 && paulistaPe.lat < -7, `Paulista-PE deve resolver para PE e não para Av. Paulista/SP (obtido: ${paulistaPe.cidade}/${paulistaPe.uf})`);
 
   const cobBrasil = resumirCoberturaViewport({
     lat: -22.3145,
@@ -356,6 +360,18 @@ console.log('\n9. Suavização de Curvas, Mão de Direção, Ciclos Semafóricos
     fallbackZooms: [13, 12, 10, 8, 6]
   });
   assert(cobBrasil.percent === 100 && cobBrasil.fallback > 0, `Cobertura nacional deve usar fallback ancestral até z6/z8/z10 (${cobBrasil.percent}%)`);
+
+  const { rotearRodoviarioNacionalR2 } = await import('./astar-routing.js');
+  const hwMock = await rotearRodoviarioNacionalR2(
+    { lat: -16.6869, lng: -49.2648 },
+    { lat: -15.7942, lng: -47.8825 },
+    async () => ({
+      e: 4096,
+      road: [{ k: 'motorway', c: [0, 4096, 2048, 2048, 4096, 0] }],
+      name: [{ n: 'BR-060', c: [0, 4096, 4096, 0] }]
+    })
+  );
+  assert(hwMock.found && hwMock.waypoints.length >= 3, 'Roteador rodoviário nacional A* deve conectar cidades via malha z8');
 }
 
 console.log('\n========================================');

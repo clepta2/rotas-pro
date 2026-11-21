@@ -1183,10 +1183,10 @@ export class PonteMapEngine {
       ? `falha ao carregar índice (${error})`
       : (index ? null : 'carregando índice');
     const details = [];
-    if (this.zoom >= 6.0) {
+    if (this.zoom >= 4.0) {
       const state = loadState(this.hqIndex, this.hqIndexError);
       const hqZ = this._hqTileZoom();
-      const fbZooms = [13, 12, 10, 8, 6].filter((z) => z < hqZ);
+      const fbZooms = [13, 12, 10, 8, 6, 5, 4].filter((z) => z < hqZ);
       details.push(`Ruas HQ: ${state || describe(resumirCoberturaViewport({
         lat: this.lat, lng: this.lng, zoom: this.zoom, width: this.width, height: this.height,
         tileZoom: hqZ, index: this.hqIndex,
@@ -1774,7 +1774,7 @@ export class PonteMapEngine {
     if (this.hqIndex || this.hqIndexLoading || this.hqIndexError) return;
     this.hqIndexLoading = true;
     try {
-      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json`);
+      const res = await fetch(`${this.apiBase}/api/mapas/hq/index.json?v=4.4.0`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       const idx = {};
@@ -1956,10 +1956,12 @@ export class PonteMapEngine {
     if (this.zoom >= 11.2) return 12;
     if (this.zoom >= 9.2) return 10;
     if (this.zoom >= 7.2) return 8;
-    return 6;
+    if (this.zoom >= 5.5) return 6;
+    if (this.zoom >= 4.5) return 5;
+    return 4;
   }
 
-  // Retorna lista de tiles visíveis com o melhor tile carregado (próprio ou ancestral até z6)
+  // Retorna lista de tiles visíveis com o melhor tile carregado (próprio ou ancestral até z4)
   _hqVisibleTiles() {
     const tz = this._hqTileZoom();
     const scale = 256 * Math.pow(2, this.zoom - tz);
@@ -1978,7 +1980,7 @@ export class PonteMapEngine {
       for (let ty = minTy; ty <= maxTy; ty++) wanted.push({ tx, ty, d: (tx - cx) ** 2 + (ty - cy) ** 2 });
     }
     wanted.sort((a, b) => a.d - b.d);
-    const ancestors = [13, 12, 10, 8, 6].filter((z) => z < tz);
+    const ancestors = [13, 12, 10, 8, 6, 5, 4].filter((z) => z < tz);
 
     for (const { tx, ty } of wanted) {
       const rect = { x: tx * scale - tlx, y: ty * scale - tly, s: scale };
@@ -2035,12 +2037,12 @@ export class PonteMapEngine {
   }
 
   _hqActive() {
-    if (this.zoom < 6.0) return false;
+    if (this.zoom < 4.0) return false;
     if (!this.hqIndex) { this._loadHqIndex(); return false; }
     const tz = this._hqTileZoom();
     const c = PonteMapEngine.tileOf(this.lat, this.lng, tz);
     if (this._hasHq(tz, c.x, c.y)) return true;
-    for (const az of [13, 12, 10, 8, 6]) {
+    for (const az of [13, 12, 10, 8, 6, 5, 4]) {
       if (az >= tz) continue;
       const shift = tz - az;
       if (this._hasHq(az, c.x >> shift, c.y >> shift)) return true;
@@ -2419,6 +2421,7 @@ export class PonteMapEngine {
           if (seen.has(pl.n)) continue;
           const isCity = pl.k === 'city';
           const isTown = pl.k === 'town';
+          if (this.zoom < 6.5 && (!isCity || (pl.r || 10) > 5)) continue;
           if (this.zoom < 8.5 && !isCity) continue;
           if (this.zoom < 12.8 && !isCity && !isTown) continue;
           const big = isCity || isTown;
